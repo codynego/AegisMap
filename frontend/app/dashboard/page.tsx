@@ -983,6 +983,9 @@ export default function DashboardPage() {
           if (index === 1) {
             router.push("/dashboard/live-intelligence");
           }
+          if (index === 2) {
+            router.push("/dashboard/incident-reports");
+          }
         }}
       />
 
