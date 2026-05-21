@@ -120,6 +120,8 @@ type DashboardMapProps = {
   onExactPinChange?: (value: ExactPin | null) => void;
   onFocusChange?: (value: { latitude: number; longitude: number } | null) => void;
   controlsTargetId?: string;
+  mode?: "controls" | "incident";
+  onRequestModeChange?: (mode: "controls" | "incident") => void;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -318,6 +320,8 @@ export function DashboardMap({
   onExactPinChange,
   onFocusChange,
   controlsTargetId,
+  mode = "controls",
+  onRequestModeChange,
 }: DashboardMapProps) {
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -755,6 +759,8 @@ export function DashboardMap({
       onLocate={locateMe}
       onTogglePinpoint={togglePinpoint}
       onClearPin={clearPin}
+      mode={mode}
+      onModeChange={(m) => onRequestModeChange?.(m)}
     />
   );
   const portalControls = controlsTargetElement ? createPortal(controlsContent, controlsTargetElement) : null;
@@ -956,6 +962,8 @@ type ControlsProps = {
   onLocate: () => void;
   onTogglePinpoint: () => void;
   onClearPin: () => void;
+  mode?: "controls" | "incident";
+  onModeChange?: (mode: "controls" | "incident") => void;
 };
 
 function ControlsContent({
@@ -980,6 +988,8 @@ function ControlsContent({
   onLocate,
   onTogglePinpoint,
   onClearPin,
+  mode = "controls",
+  onModeChange,
 }: ControlsProps) {
   const inputCls =
     "w-full rounded-xl border border-[rgba(61,73,76,0.5)] bg-[rgba(22,27,43,0.8)] px-3 py-2.5 text-sm text-[#dee1f7] outline-none placeholder:text-[rgba(188,201,205,0.35)] focus:border-[rgba(76,215,246,0.6)] transition-colors";
@@ -992,9 +1002,27 @@ function ControlsContent({
       {/* Header */}
       <div className="flex items-center justify-between">
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#4cd7f6]">Controls</p>
-        <span className="rounded-full bg-[rgba(76,215,246,0.1)] px-2.5 py-1 font-mono text-[10px] text-[#4cd7f6]">
-          Zoom {zoomLevel}×
-        </span>
+        <div className="flex items-center gap-2">
+          <div className="rounded-full bg-[rgba(76,215,246,0.1)] px-2.5 py-1 font-mono text-[10px] text-[#4cd7f6]">
+            Zoom {zoomLevel}×
+          </div>
+          <div className="rounded-md border border-[rgba(61,73,76,0.35)] bg-[rgba(9,14,28,0.6)] p-1 flex items-center">
+            <button
+              type="button"
+              onClick={() => onModeChange?.("controls")}
+              className={`px-2 py-1 rounded-md text-xs ${mode === "controls" ? "bg-[rgba(76,215,246,0.12)] text-[#4cd7f6]" : "text-[rgba(188,201,205,0.7)]"}`}
+            >
+              Controls
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange?.("incident")}
+              className={`px-2 py-1 rounded-md text-xs ${mode === "incident" ? "bg-[rgba(255,95,109,0.08)] text-[#ff5f6d]" : "text-[rgba(188,201,205,0.7)]"}`}
+            >
+              Incidents
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Map style */}

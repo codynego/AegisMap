@@ -722,7 +722,7 @@ export default function LiveIntelligencePage() {
       <div className="lg:ml-72">
         <TopBar
           onMenuOpen={() => setSidebarOpen(true)}
-          onNotificationsOpen={() => setRightMode('incident')}
+          onNotificationsOpen={() => {}}
           locationLabel={locationLabel}
           alertCount={alerts.length}
         />
@@ -732,6 +732,9 @@ export default function LiveIntelligencePage() {
         <div className="grid h-[calc(100dvh-56px)] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
           <section className="relative overflow-hidden">
             <DashboardMap
+              controlsTargetId="live-intelligence-map-controls"
+              mode={rightMode}
+              onRequestModeChange={(m) => setRightMode(m)}
               selectedState={selectedState}
               selectedCity={selectedCity}
               selectedStreet={selectedStreet}
@@ -755,10 +758,23 @@ export default function LiveIntelligencePage() {
               onZoomChange={setZoom}
               onExactPinChange={setExactPin}
               onFocusChange={setMapFocus}
-                onIncidentSelect={(inc) => {
-                  setSelectedIncident(inc);
-                  setRightMode('incident');
-                }}
+              onIncidentSelect={(inc) => {
+                const mapped: SelectedIncident = {
+                  id: inc.id,
+                  title: inc.title,
+                  incidentType: inc.incidentType,
+                  severity: inc.severity,
+                  confidence: inc.confidence,
+                  status: inc.status,
+                  summary: inc.summary,
+                  detectedAt: inc.detectedAt,
+                  latitude: inc.latitude,
+                  longitude: inc.longitude,
+                  locationName: inc.locationName,
+                };
+                setSelectedIncident(mapped);
+                setRightMode('incident');
+              }}
             />
 
             <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 p-4">
@@ -770,38 +786,57 @@ export default function LiveIntelligencePage() {
             </div>
           </section>
 
-          <aside className="flex min-h-0 flex-col overflow-hidden border-t border-white/[0.06] bg-[#090F1E] lg:border-l lg:border-t-0 lg:flex lg:flex-col">
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              {selectedIncident ? (
-                <div className="flex-1 overflow-y-auto">
-                  <div className="flex items-center justify-between border-b border-white/[0.06] p-4">
-                    <h3 className="font-semibold">Incident detail</h3>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="text-sm text-white/60"
-                        onClick={() => {
+          <aside className="hidden lg:flex min-h-0 flex-col overflow-hidden border-t border-white/[0.06] bg-[#090F1E] lg:border-l lg:border-t-0">
+            {rightMode === 'controls' ? (
+              <div className="p-4 flex-1">
+                <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-cyan-400">Map controls</p>
+                  <div className="mt-3" id="live-intelligence-map-controls" />
+                </div>
+                <div className="mt-4 text-right">
+                  <button
+                    className="text-sm text-white/60 underline"
+                    onClick={() => setRightMode('incident')}
+                  >
+                    Toggle to incident view
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {selectedIncident ? (
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="flex items-center justify-between border-b border-white/[0.06] p-4">
+                      <h3 className="font-semibold">Incident detail</h3>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="text-sm text-white/60"
+                          onClick={() => {
+                            setSelectedIncident(null);
+                            setRightMode('controls');
+                          }}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                    <div className="p-4">
+                      <IncidentDetail
+                        incident={selectedIncident}
+                        onBack={() => {
                           setSelectedIncident(null);
+                          setRightMode('controls');
                         }}
-                      >
-                        Close
-                      </button>
+                      />
                     </div>
                   </div>
+                ) : (
                   <div className="p-4">
-                    <IncidentDetail
-                      incident={selectedIncident}
-                      onBack={() => {
-                        setSelectedIncident(null);
-                      }}
-                    />
+                    <p className="text-sm text-white/50">No incident selected.</p>
                   </div>
-                </div>
-              ) : (
-                <div className="p-4">
-                  <p className="text-sm text-white/50">No incident selected.</p>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </aside>
         </div>
       </div>
