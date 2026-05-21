@@ -1,0 +1,45 @@
+export type NigeriaState = {
+  state: string;
+  center: [number, number];
+  zoom: number;
+};
+
+export const nigeriaStates: NigeriaState[] = [
+  { state: "Abia", center: [7.49, 5.53], zoom: 8.6 },
+  { state: "Adamawa", center: [12.48, 9.23], zoom: 8.3 },
+  { state: "Akwa Ibom", center: [7.93, 5.04], zoom: 8.7 },
+  { state: "Anambra", center: [7.07, 6.21], zoom: 8.8 },
+  { state: "Bauchi", center: [9.84, 10.31], zoom: 8.3 },
+  { state: "Bayelsa", center: [6.26, 4.92], zoom: 8.4 },
+  { state: "Benue", center: [8.54, 7.73], zoom: 8.1 },
+  { state: "Borno", center: [13.15, 11.84], zoom: 7.7 },
+  { state: "Cross River", center: [8.33, 4.95], zoom: 8.1 },
+  { state: "Delta", center: [6.73, 6.2], zoom: 8.4 },
+  { state: "Ebonyi", center: [8.11, 6.32], zoom: 8.7 },
+  { state: "Edo", center: [5.62, 6.34], zoom: 8.5 },
+  { state: "Ekiti", center: [5.22, 7.62], zoom: 8.8 },
+  { state: "Enugu", center: [7.51, 6.45], zoom: 8.6 },
+  { state: "FCT Abuja", center: [7.49, 9.07], zoom: 9.3 },
+  { state: "Gombe", center: [11.17, 10.29], zoom: 8.4 },
+  { state: "Imo", center: [7.03, 5.49], zoom: 8.8 },
+  { state: "Jigawa", center: [9.34, 11.76], zoom: 8.2 },
+  { state: "Kaduna", center: [7.44, 10.52], zoom: 8.2 },
+  { state: "Kano", center: [8.52, 12.0], zoom: 8.4 },
+  { state: "Katsina", center: [7.62, 12.99], zoom: 8.1 },
+  { state: "Kebbi", center: [4.2, 12.46], zoom: 7.9 },
+  { state: "Kogi", center: [6.74, 7.8], zoom: 8.1 },
+  { state: "Kwara", center: [4.55, 8.5], zoom: 8.4 },
+  { state: "Lagos", center: [3.39, 6.52], zoom: 8.8 },
+  { state: "Nasarawa", center: [8.52, 8.49], zoom: 8.3 },
+  { state: "Niger", center: [6.56, 9.62], zoom: 8.0 },
+  { state: "Ogun", center: [3.35, 7.15], zoom: 8.4 },
+  { state: "Ondo", center: [5.2, 7.25], zoom: 8.5 },
+  { state: "Osun", center: [4.56, 7.77], zoom: 8.5 },
+  { state: "Oyo", center: [3.92, 7.38], zoom: 8.3 },
+  { state: "Plateau", center: [8.89, 9.9], zoom: 8.4 },
+  { state: "Rivers", center: [7.01, 4.82], zoom: 8.6 },
+  { state: "Sokoto", center: [5.24, 13.06], zoom: 8.0 },
+  { state: "Taraba", center: [11.36, 8.89], zoom: 8.0 },
+  { state: "Yobe", center: [11.96, 11.75], zoom: 8.0 },
+  { state: "Zamfara", center: [6.66, 12.17], zoom: 8.0 },
+];

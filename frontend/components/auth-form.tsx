@@ -21,6 +21,15 @@ type AuthResponse = {
   };
 };
 
+type ApiErrorResponse = {
+  detail?: string;
+  [key: string]: string | string[] | undefined;
+};
+
+function isAuthResponse(data: AuthResponse | ApiErrorResponse | null): data is AuthResponse {
+  return Boolean(data && "token" in data && typeof data.token === "string" && "user" in data);
+}
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8000/api";
@@ -55,6 +64,30 @@ export function AuthForm({ mode }: AuthFormProps) {
     [isLogin],
   );
 
+  function getErrorMessage(data: ApiErrorResponse | null) {
+    if (!data) {
+      return "Authentication failed. Please review your details and try again.";
+    }
+
+    if (typeof data.detail === "string" && data.detail.trim()) {
+      return data.detail;
+    }
+
+    const firstFieldError = Object.values(data).find((value) =>
+      Array.isArray(value) ? value.length > 0 : typeof value === "string" && value.trim(),
+    );
+
+    if (Array.isArray(firstFieldError)) {
+      return firstFieldError[0] ?? "Authentication failed. Please review your details and try again.";
+    }
+
+    if (typeof firstFieldError === "string") {
+      return firstFieldError;
+    }
+
+    return "Authentication failed. Please review your details and try again.";
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -84,16 +117,13 @@ export function AuthForm({ mode }: AuthFormProps) {
         body: JSON.stringify(payload),
       });
 
-      const data = (await response.json().catch(() => null)) as AuthResponse | { detail?: string } | null;
+      const data = (await response.json().catch(() => null)) as AuthResponse | ApiErrorResponse | null;
 
       if (!response.ok) {
-        const detail =
-          (data && "detail" in data && data.detail) ||
-          "Authentication failed. Please review your details and try again.";
-        throw new Error(detail);
+        throw new Error(getErrorMessage(data as ApiErrorResponse | null));
       }
 
-      if (!data || !("token" in data) || !data.token) {
+      if (!isAuthResponse(data) || !data.token) {
         throw new Error("Authentication succeeded, but no token was returned.");
       }
 
