@@ -340,6 +340,7 @@ export function DashboardMap({
   const incidentMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const pinMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const styleRef = useRef<string>(MAP_STYLES[0].value);
+  const focusKeyRef = useRef<string | null>(null);
 
   // UI state
   const [loaded, setLoaded] = useState(false);
@@ -433,8 +434,10 @@ export function DashboardMap({
     });
 
     mapRef.current = map;
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "bottom-left");
-    map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-right");
+    if (window.innerWidth >= 768) {
+      map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "bottom-left");
+      map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-right");
+    }
 
     const ro = new ResizeObserver(() => map.resize());
     ro.observe(containerRef.current!);
@@ -493,7 +496,18 @@ export function DashboardMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
-    map.flyTo({ center: focusCenter, zoom: toMapZoom(zoomLevel), speed: 0.85, curve: 1.2, essential: true });
+
+    const nextFocusKey = `${focusCenter[0].toFixed(6)}:${focusCenter[1].toFixed(6)}`;
+    if (focusKeyRef.current === nextFocusKey) return;
+
+    focusKeyRef.current = nextFocusKey;
+    map.flyTo({
+      center: focusCenter,
+      zoom: toMapZoom(zoomLevel),
+      speed: 0.85,
+      curve: 1.2,
+      essential: true,
+    });
     onFocusChange?.({ latitude: focusCenter[1], longitude: focusCenter[0] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, focusCenter, zoomLevel]);
@@ -706,6 +720,14 @@ export function DashboardMap({
   }
 
   function syncZoom(nextZoom: number) {
+    const map = mapRef.current;
+    if (map && loadedRef.current) {
+      map.easeTo({
+        zoom: toMapZoom(nextZoom),
+        duration: 260,
+        essential: true,
+      });
+    }
     onZoomChange?.(nextZoom);
   }
 

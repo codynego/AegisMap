@@ -1,19 +1,17 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useSyncExternalStore } from "react";
 
 type DashboardLayoutProps = {
   children: ReactNode;
 };
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
-  const [authorized] = useState(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-
-    return Boolean(window.localStorage.getItem("geopulse.token"));
-  });
+  const authorized = useSyncExternalStore(
+    () => () => {},
+    () => Boolean(window.localStorage.getItem("geopulse.token")),
+    () => false,
+  );
 
   useEffect(() => {
     if (!authorized) {
