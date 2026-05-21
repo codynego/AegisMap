@@ -122,6 +122,8 @@ type DashboardMapProps = {
   controlsTargetId?: string;
   mode?: "controls" | "incident";
   onRequestModeChange?: (mode: "controls" | "incident") => void;
+  selectedIncident?: IncidentPoint | null;
+  onClearSelectedIncident?: () => void;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -322,6 +324,8 @@ export function DashboardMap({
   controlsTargetId,
   mode = "controls",
   onRequestModeChange,
+  selectedIncident,
+  onClearSelectedIncident,
 }: DashboardMapProps) {
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -761,6 +765,16 @@ export function DashboardMap({
       onClearPin={clearPin}
       mode={mode}
       onModeChange={(m) => onRequestModeChange?.(m)}
+      incidents={incidents}
+      selectedIncident={selectedIncident}
+      onIncidentClick={(inc) => {
+        onIncidentSelect?.(inc);
+        onRequestModeChange?.("incident");
+      }}
+      onClearSelectedIncident={() => {
+        onRequestModeChange?.("controls");
+        onClearSelectedIncident?.();
+      }}
     />
   );
   const portalControls = controlsTargetElement ? createPortal(controlsContent, controlsTargetElement) : null;
@@ -964,6 +978,10 @@ type ControlsProps = {
   onClearPin: () => void;
   mode?: "controls" | "incident";
   onModeChange?: (mode: "controls" | "incident") => void;
+  incidents?: IncidentPoint[];
+  selectedIncident?: IncidentPoint | null;
+  onIncidentClick?: (inc: IncidentPoint) => void;
+  onClearSelectedIncident?: () => void;
 };
 
 function ControlsContent({
@@ -990,6 +1008,10 @@ function ControlsContent({
   onClearPin,
   mode = "controls",
   onModeChange,
+  incidents,
+  selectedIncident,
+  onIncidentClick,
+  onClearSelectedIncident,
 }: ControlsProps) {
   const inputCls =
     "w-full rounded-xl border border-[rgba(61,73,76,0.5)] bg-[rgba(22,27,43,0.8)] px-3 py-2.5 text-sm text-[#dee1f7] outline-none placeholder:text-[rgba(188,201,205,0.35)] focus:border-[rgba(76,215,246,0.6)] transition-colors";
@@ -1025,139 +1047,189 @@ function ControlsContent({
         </div>
       </div>
 
-      {/* Map style */}
-      <div className={sectionCls}>
-        <label>
-          <span className={labelCls}>Map Style</span>
-          <select
-            value={mapStyle}
-            onChange={(e) => onMapStyleChange(e.target.value)}
-            className={inputCls}
-          >
-            {MAP_STYLES.map((s) => (
-              <option key={s.value} value={s.value} className="bg-[#0d1426]">
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/* State */}
-      <div className={sectionCls}>
-        <label>
-          <span className={labelCls}>State</span>
-          <select
-            value={selectedState}
-            onChange={(e) => onStateChange(e.target.value)}
-            className={inputCls}
-          >
-            {NIGERIA_STATES.map((s) => (
-              <option key={s.state} value={s.state} className="bg-[#0d1426]">
-                {s.state}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/* City */}
-      <div className={sectionCls}>
-        <label>
-          <span className={labelCls}>City</span>
-          <input
-            list="gp-city-list"
-            value={cityQuery}
-            onChange={(e) => {
-              onCityQueryChange(e.target.value);
-              const found = cityOptions.find((o) => o.label === e.target.value);
-              if (found) onPickCity(found);
-            }}
-            placeholder="Search city…"
-            className={inputCls}
-          />
-          <datalist id="gp-city-list">
-            {cityOptions.map((o) => <option key={o.id} value={o.label} />)}
-          </datalist>
-        </label>
-      </div>
-
-      {/* Street */}
-      <div className={sectionCls}>
-        <label>
-          <span className={labelCls}>Street</span>
-          <input
-            list="gp-street-list"
-            value={streetQuery}
-            onChange={(e) => {
-              onStreetQueryChange(e.target.value);
-              const found = streetOptions.find((o) => o.label === e.target.value);
-              if (found) onPickStreet(found);
-            }}
-            placeholder="Search street…"
-            className={inputCls}
-          />
-          <datalist id="gp-street-list">
-            {streetOptions.map((o) => <option key={o.id} value={o.label} />)}
-          </datalist>
-        </label>
-      </div>
-
-      {/* Zoom slider */}
-      <div>
-        <span className={labelCls}>Zoom Level</span>
-        <input
-          type="range"
-          min={1}
-          max={5}
-          step={1}
-          value={zoomLevel}
-          onChange={(e) => onZoomChange(Number(e.target.value))}
-          className="w-full accent-[#4cd7f6]"
-        />
-        <div className="flex justify-between mt-0.5">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <span key={n} className="font-mono text-[9px] text-[rgba(188,201,205,0.4)]">{n}</span>
-          ))}
+      {mode === "incident" ? (
+        <div className="grid gap-3">
+          {selectedIncident ? (
+            <div className="rounded-xl border border-[rgba(61,73,76,0.45)] bg-[rgba(13,20,38,0.85)] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-mono text-sm text-[#ff5f6d]">{selectedIncident.title}</div>
+                  <div className="text-xs text-[rgba(188,201,205,0.6)]">{selectedIncident.locationName} · {new Date(selectedIncident.detectedAt).toLocaleString()}</div>
+                </div>
+                <div className="flex flex-col items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { onModeChange?.("controls"); onClearSelectedIncident?.(); }}
+                    className="text-xs rounded-md bg-[rgba(76,215,246,0.08)] px-2 py-1 text-[#4cd7f6]"
+                  >
+                    Back to controls
+                  </button>
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-[rgba(188,201,205,0.8)]">{selectedIncident.summary}</p>
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {(incidents && incidents.length > 0) ? (
+                incidents.map((inc) => (
+                  <button
+                    key={inc.id}
+                    type="button"
+                    onClick={() => onIncidentClick?.(inc)}
+                    className="text-left rounded-xl border border-[rgba(61,73,76,0.45)] bg-[rgba(13,20,38,0.85)] px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-mono text-sm text-[#ff5f6d]">{inc.title}</div>
+                        <div className="text-xs text-[rgba(188,201,205,0.6)]">{inc.locationName}</div>
+                      </div>
+                      <div className="text-xs text-[rgba(188,201,205,0.55)]">{inc.severity}</div>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="text-xs text-[rgba(188,201,205,0.55)]">No incidents available.</div>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Map style */}
+          <div className={sectionCls}>
+            <label>
+              <span className={labelCls}>Map Style</span>
+              <select
+                value={mapStyle}
+                onChange={(e) => onMapStyleChange(e.target.value)}
+                className={inputCls}
+              >
+                {MAP_STYLES.map((s) => (
+                  <option key={s.value} value={s.value} className="bg-[#0d1426]">
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-      {/* Action buttons */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={onLocate}
-          className="flex items-center justify-center gap-1.5 rounded-xl bg-[rgba(76,215,246,0.1)] border border-[rgba(76,215,246,0.2)] px-3 py-2.5 text-sm font-medium text-[#4cd7f6] transition hover:bg-[rgba(76,215,246,0.18)] active:scale-95"
-        >
-          {isLocating ? <SpinIcon /> : <LocateIcon />}
-          <span className="text-xs">{isLocating ? "Locating…" : "My location"}</span>
-        </button>
-        <button
-          type="button"
-          onClick={onTogglePinpoint}
-          className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-medium transition active:scale-95 ${
-            pinpointMode
-              ? "border-[rgba(255,129,122,0.35)] bg-[rgba(255,129,122,0.12)] text-[#ff817a]"
-              : "border-[rgba(78,222,163,0.25)] bg-[rgba(78,222,163,0.08)] text-[#4edea3] hover:bg-[rgba(78,222,163,0.14)]"
-          }`}
-        >
-          <PinIcon />
-          {pinpointMode ? "Cancel pin" : "Drop pin"}
-        </button>
-      </div>
+          {/* State */}
+          <div className={sectionCls}>
+            <label>
+              <span className={labelCls}>State</span>
+              <select
+                value={selectedState}
+                onChange={(e) => onStateChange(e.target.value)}
+                className={inputCls}
+              >
+                {NIGERIA_STATES.map((s) => (
+                  <option key={s.state} value={s.state} className="bg-[#0d1426]">
+                    {s.state}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-      {exactPin && (
-        <button
-          type="button"
-          onClick={onClearPin}
-          className="w-full rounded-xl border border-[rgba(61,73,76,0.45)] bg-[rgba(22,27,43,0.6)] px-3 py-2.5 text-xs text-[rgba(188,201,205,0.65)] transition hover:border-[rgba(76,215,246,0.4)] hover:text-[#dee1f7] active:scale-95"
-        >
-          Clear pin
-        </button>
-      )}
+          {/* City */}
+          <div className={sectionCls}>
+            <label>
+              <span className={labelCls}>City</span>
+              <input
+                list="gp-city-list"
+                value={cityQuery}
+                onChange={(e) => {
+                  onCityQueryChange(e.target.value);
+                  const found = cityOptions.find((o) => o.label === e.target.value);
+                  if (found) onPickCity(found);
+                }}
+                placeholder="Search city…"
+                className={inputCls}
+              />
+              <datalist id="gp-city-list">
+                {cityOptions.map((o) => <option key={o.id} value={o.label} />)}
+              </datalist>
+            </label>
+          </div>
 
-      {statusMsg && (
-        <p className="text-xs leading-5 text-[rgba(188,201,205,0.55)]">{statusMsg}</p>
+          {/* Street */}
+          <div className={sectionCls}>
+            <label>
+              <span className={labelCls}>Street</span>
+              <input
+                list="gp-street-list"
+                value={streetQuery}
+                onChange={(e) => {
+                  onStreetQueryChange(e.target.value);
+                  const found = streetOptions.find((o) => o.label === e.target.value);
+                  if (found) onPickStreet(found);
+                }}
+                placeholder="Search street…"
+                className={inputCls}
+              />
+              <datalist id="gp-street-list">
+                {streetOptions.map((o) => <option key={o.id} value={o.label} />)}
+              </datalist>
+            </label>
+          </div>
+
+          {/* Zoom slider */}
+          <div>
+            <span className={labelCls}>Zoom Level</span>
+            <input
+              type="range"
+              min={1}
+              max={5}
+              step={1}
+              value={zoomLevel}
+              onChange={(e) => onZoomChange(Number(e.target.value))}
+              className="w-full accent-[#4cd7f6]"
+            />
+            <div className="flex justify-between mt-0.5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <span key={n} className="font-mono text-[9px] text-[rgba(188,201,205,0.4)]">{n}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onLocate}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-[rgba(76,215,246,0.1)] border border-[rgba(76,215,246,0.2)] px-3 py-2.5 text-sm font-medium text-[#4cd7f6] transition hover:bg-[rgba(76,215,246,0.18)] active:scale-95"
+            >
+              {isLocating ? <SpinIcon /> : <LocateIcon />}
+              <span className="text-xs">{isLocating ? "Locating…" : "My location"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onTogglePinpoint}
+              className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-medium transition active:scale-95 ${
+                pinpointMode
+                  ? "border-[rgba(255,129,122,0.35)] bg-[rgba(255,129,122,0.12)] text-[#ff817a]"
+                  : "border-[rgba(78,222,163,0.25)] bg-[rgba(78,222,163,0.08)] text-[#4edea3] hover:bg-[rgba(78,222,163,0.14)]"
+              }`}
+            >
+              <PinIcon />
+              {pinpointMode ? "Cancel pin" : "Drop pin"}
+            </button>
+          </div>
+
+          {exactPin && (
+            <button
+              type="button"
+              onClick={onClearPin}
+              className="w-full rounded-xl border border-[rgba(61,73,76,0.45)] bg-[rgba(22,27,43,0.6)] px-3 py-2.5 text-xs text-[rgba(188,201,205,0.65)] transition hover:border-[rgba(76,215,246,0.4)] hover:text-[#dee1f7] active:scale-95"
+            >
+              Clear pin
+            </button>
+          )}
+
+          {statusMsg && (
+            <p className="text-xs leading-5 text-[rgba(188,201,205,0.55)]">{statusMsg}</p>
+          )}
+        </>
       )}
     </div>
   );

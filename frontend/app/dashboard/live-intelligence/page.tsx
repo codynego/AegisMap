@@ -775,6 +775,11 @@ export default function LiveIntelligencePage() {
                 setSelectedIncident(mapped);
                 setRightMode('incident');
               }}
+              selectedIncident={selectedIncident}
+              onClearSelectedIncident={() => {
+                setSelectedIncident(null);
+                setRightMode('controls');
+              }}
             />
 
             <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 p-4">
