@@ -1,4 +1,10 @@
+from django.utils import timezone
 from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from apps.audit_logs.services import record_audit_event
+from apps.users.permissions import IsAuthenticatedReadAnalystWrite
 
 from .models import Alert, AlertRule
 from .serializers import AlertRuleSerializer, AlertSerializer
@@ -6,6 +12,7 @@ from .serializers import AlertRuleSerializer, AlertSerializer
 
 class AlertViewSet(viewsets.ModelViewSet):
     serializer_class = AlertSerializer
+    permission_classes = [IsAuthenticatedReadAnalystWrite]
     queryset = Alert.objects.select_related(
         "rule",
         "watch_zone",
@@ -27,7 +34,38 @@ class AlertViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    @action(detail=True, methods=["post"])
+    def acknowledge(self, request, pk=None):
+        alert = self.get_object()
+        alert.status = "acknowledged"
+        alert.acknowledged_at = timezone.now()
+        alert.save(update_fields=["status", "acknowledged_at"])
+        record_audit_event(
+            "alert.acknowledged",
+            actor=request.user,
+            obj=alert,
+            request=request,
+            description=f"Alert '{alert.title}' acknowledged.",
+        )
+        return Response(self.get_serializer(alert).data)
+
+    @action(detail=True, methods=["post"])
+    def resolve(self, request, pk=None):
+        alert = self.get_object()
+        alert.status = "resolved"
+        alert.resolved_at = timezone.now()
+        alert.save(update_fields=["status", "resolved_at"])
+        record_audit_event(
+            "alert.resolved",
+            actor=request.user,
+            obj=alert,
+            request=request,
+            description=f"Alert '{alert.title}' resolved.",
+        )
+        return Response(self.get_serializer(alert).data)
+
 
 class AlertRuleViewSet(viewsets.ModelViewSet):
     serializer_class = AlertRuleSerializer
+    permission_classes = [IsAuthenticatedReadAnalystWrite]
     queryset = AlertRule.objects.all()

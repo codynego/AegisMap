@@ -144,3 +144,53 @@ class SignalEvidence(models.Model):
 
     def __str__(self) -> str:
         return f"{self.signal.title} - {self.evidence_type}"
+
+
+class IngestionSourceType(models.TextChoices):
+    API = "api", "API"
+    CSV = "csv", "CSV"
+    SOCIAL = "social", "Social"
+    SMS = "sms", "SMS"
+    WHATSAPP = "whatsapp", "WhatsApp"
+    BULK = "bulk", "Bulk"
+
+
+class IngestionJobStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    PROCESSING = "processing", "Processing"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
+class SignalIngestionJob(models.Model):
+    source_type = models.CharField(
+        max_length=16,
+        choices=IngestionSourceType.choices,
+        default=IngestionSourceType.API,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=IngestionJobStatus.choices,
+        default=IngestionJobStatus.PENDING,
+    )
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ingestion_jobs",
+    )
+    name = models.CharField(max_length=255)
+    payload = models.JSONField(default=dict, blank=True)
+    processed_count = models.PositiveIntegerField(default=0)
+    created_signal_ids = models.JSONField(default=list, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.name

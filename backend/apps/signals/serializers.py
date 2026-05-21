@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Signal, SignalEvidence
+from .models import Signal, SignalEvidence, SignalIngestionJob
 
 
 class SignalEvidenceSerializer(serializers.ModelSerializer):
@@ -22,6 +22,7 @@ class SignalEvidenceSerializer(serializers.ModelSerializer):
 
 class SignalSerializer(serializers.ModelSerializer):
     evidence_items = SignalEvidenceSerializer(many=True, read_only=True)
+    duplicate_of = serializers.SerializerMethodField()
 
     class Meta:
         model = Signal
@@ -48,5 +49,39 @@ class SignalSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "evidence_items",
+            "duplicate_of",
         ]
         read_only_fields = ["id", "received_at", "created_at", "updated_at"]
+
+    def get_duplicate_of(self, obj):
+        return obj.metadata.get("duplicate_of")
+
+
+class SignalIngestionJobSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SignalIngestionJob
+        fields = [
+            "id",
+            "source_type",
+            "status",
+            "submitted_by",
+            "name",
+            "payload",
+            "processed_count",
+            "created_signal_ids",
+            "error_message",
+            "created_at",
+            "updated_at",
+            "completed_at",
+        ]
+        read_only_fields = [
+            "id",
+            "submitted_by",
+            "status",
+            "processed_count",
+            "created_signal_ids",
+            "error_message",
+            "created_at",
+            "updated_at",
+            "completed_at",
+        ]
