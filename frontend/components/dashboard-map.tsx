@@ -19,7 +19,7 @@
  *   @import "mapbox-gl/dist/mapbox-gl.css";
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import mapboxgl from "mapbox-gl";
 
@@ -120,10 +120,11 @@ type DashboardMapProps = {
   onExactPinChange?: (value: ExactPin | null) => void;
   onFocusChange?: (value: { latitude: number; longitude: number } | null) => void;
   controlsTargetId?: string;
-  mode?: "controls" | "incident";
-  onRequestModeChange?: (mode: "controls" | "incident") => void;
+  mode?: "controls" | "incident" | "filter";
+  onRequestModeChange?: (mode: "controls" | "incident" | "filter") => void;
   selectedIncident?: IncidentPoint | null;
   onClearSelectedIncident?: () => void;
+  filterPanel?: ReactNode;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -326,6 +327,7 @@ export function DashboardMap({
   onRequestModeChange,
   selectedIncident,
   onClearSelectedIncident,
+  filterPanel,
 }: DashboardMapProps) {
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
@@ -495,6 +497,23 @@ export function DashboardMap({
     onFocusChange?.({ latitude: focusCenter[1], longitude: focusCenter[0] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, focusCenter, zoomLevel]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !selectedIncident) return;
+
+    map.flyTo({
+      center: [selectedIncident.longitude, selectedIncident.latitude],
+      zoom: Math.max(map.getZoom(), 12),
+      speed: 0.8,
+      curve: 1.15,
+      essential: true,
+    });
+    onFocusChange?.({
+      latitude: selectedIncident.latitude,
+      longitude: selectedIncident.longitude,
+    });
+  }, [loaded, onFocusChange, selectedIncident]);
 
   // ── Watch zone circles (GeoJSON layer) ──
   useEffect(() => {
@@ -775,6 +794,7 @@ export function DashboardMap({
         onRequestModeChange?.("controls");
         onClearSelectedIncident?.();
       }}
+      filterPanel={filterPanel}
     />
   );
   const portalControls = controlsTargetElement ? createPortal(controlsContent, controlsTargetElement) : null;
@@ -904,7 +924,10 @@ export function DashboardMap({
         </button>
 
         {/* Scrollable controls */}
-        <div className="max-h-[65vh] overflow-y-auto border-x border-b border-[rgba(61,73,76,0.4)] bg-[rgba(13,20,38,0.97)] pb-safe-bottom pb-6 px-4 backdrop-blur-xl">
+        <div
+          className="max-h-[85vh] overflow-y-scroll border-x border-b border-[rgba(61,73,76,0.4)] bg-[rgba(13,20,38,0.97)] pb-safe-bottom pb-20 px-4 backdrop-blur-xl"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
           {controlsContent}
         </div>
       </div>
@@ -976,12 +999,13 @@ type ControlsProps = {
   onLocate: () => void;
   onTogglePinpoint: () => void;
   onClearPin: () => void;
-  mode?: "controls" | "incident";
-  onModeChange?: (mode: "controls" | "incident") => void;
+  mode?: "controls" | "incident" | "filter";
+  onModeChange?: (mode: "controls" | "incident" | "filter") => void;
   incidents?: IncidentPoint[];
   selectedIncident?: IncidentPoint | null;
   onIncidentClick?: (inc: IncidentPoint) => void;
   onClearSelectedIncident?: () => void;
+  filterPanel?: ReactNode;
 };
 
 function ControlsContent({
@@ -1012,12 +1036,19 @@ function ControlsContent({
   selectedIncident,
   onIncidentClick,
   onClearSelectedIncident,
+  filterPanel,
 }: ControlsProps) {
   const inputCls =
     "w-full rounded-xl border border-[rgba(61,73,76,0.5)] bg-[rgba(22,27,43,0.8)] px-3 py-2.5 text-sm text-[#dee1f7] outline-none placeholder:text-[rgba(188,201,205,0.35)] focus:border-[rgba(76,215,246,0.6)] transition-colors";
   const labelCls =
     "block font-mono text-[10px] uppercase tracking-[0.16em] text-[rgba(188,201,205,0.55)] mb-1.5";
   const sectionCls = "grid gap-3";
+  const incidentList = incidents ?? [];
+  const selectedIncidentIndex =
+    selectedIncident ? incidentList.findIndex((incident) => incident.id === selectedIncident.id) : -1;
+  const hasPrevIncident = selectedIncidentIndex > 0;
+  const hasNextIncident =
+    selectedIncidentIndex >= 0 && selectedIncidentIndex < incidentList.length - 1;
 
   return (
     <div className="grid gap-4 py-1">
@@ -1043,11 +1074,28 @@ function ControlsContent({
             >
               Incidents
             </button>
+            {filterPanel ? (
+              <button
+                type="button"
+                onClick={() => onModeChange?.("filter")}
+                className={`px-2 py-1 rounded-md text-xs ${mode === "filter" ? "bg-[rgba(248,193,91,0.12)] text-[#f8c15b]" : "text-[rgba(188,201,205,0.7)]"}`}
+              >
+                Filter
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
 
-      {mode === "incident" ? (
+      {mode === "filter" ? (
+        <div className="grid gap-3">
+          {filterPanel ?? (
+            <div className="rounded-xl border border-[rgba(61,73,76,0.45)] bg-[rgba(13,20,38,0.85)] p-4 text-sm text-[rgba(188,201,205,0.65)]">
+              No filter controls available.
+            </div>
+          )}
+        </div>
+      ) : mode === "incident" ? (
         <div className="grid gap-3">
           {selectedIncident ? (
             <div className="rounded-xl border border-[rgba(61,73,76,0.45)] bg-[rgba(13,20,38,0.85)] p-4">
@@ -1067,6 +1115,35 @@ function ControlsContent({
                 </div>
               </div>
               <p className="mt-3 text-sm text-[rgba(188,201,205,0.8)]">{selectedIncident.summary}</p>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                    onClick={() => {
+                      if (!hasPrevIncident) return;
+                      onIncidentClick?.(incidentList[selectedIncidentIndex - 1]);
+                    }}
+                  disabled={!hasPrevIncident}
+                  className="rounded-lg border border-[rgba(61,73,76,0.45)] px-3 py-2 text-xs font-medium text-[#dee1f7] transition hover:border-[rgba(76,215,246,0.45)] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                    onClick={() => {
+                      if (!hasNextIncident) return;
+                      onIncidentClick?.(incidentList[selectedIncidentIndex + 1]);
+                    }}
+                  disabled={!hasNextIncident}
+                  className="rounded-lg border border-[rgba(61,73,76,0.45)] px-3 py-2 text-xs font-medium text-[#dee1f7] transition hover:border-[rgba(76,215,246,0.45)] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-[rgba(188,201,205,0.55)]">
+                {selectedIncidentIndex >= 0
+                  ? `${selectedIncidentIndex + 1} of ${incidentList.length} incidents in current view`
+                  : "No incident selected"}
+              </div>
             </div>
           ) : (
             <div className="grid gap-2">

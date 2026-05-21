@@ -63,6 +63,8 @@ type SelectedIncident = {
   locationName: string;
 };
 
+type DatePreset = "all" | "today" | "7d" | "30d" | "custom";
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8000/api";
@@ -124,6 +126,62 @@ function formatIncidentType(value: string) {
     .join(" ");
 }
 
+function haversineKilometers(
+  latitudeA: number,
+  longitudeA: number,
+  latitudeB: number,
+  longitudeB: number,
+) {
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(latitudeB - latitudeA);
+  const dLng = toRadians(longitudeB - longitudeA);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(latitudeA)) *
+      Math.cos(toRadians(latitudeB)) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function matchesDatePreset(
+  dateValue: string,
+  preset: DatePreset,
+  customStart: string,
+  customEnd: string,
+) {
+  if (preset === "all") return true;
+
+  const incidentDate = new Date(dateValue);
+  if (Number.isNaN(incidentDate.getTime())) return false;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (preset === "today") {
+    return incidentDate >= startOfToday;
+  }
+
+  if (preset === "7d") {
+    return incidentDate.getTime() >= now.getTime() - 7 * 24 * 60 * 60 * 1000;
+  }
+
+  if (preset === "30d") {
+    return incidentDate.getTime() >= now.getTime() - 30 * 24 * 60 * 60 * 1000;
+  }
+
+  if (preset === "custom") {
+    if (!customStart && !customEnd) return true;
+    const start = customStart ? new Date(`${customStart}T00:00:00`) : null;
+    const end = customEnd ? new Date(`${customEnd}T23:59:59`) : null;
+
+    if (start && incidentDate < start) return false;
+    if (end && incidentDate > end) return false;
+  }
+
+  return true;
+}
+
 function SeverityBadge({ level }: { level: string }) {
   const lower = level.toLowerCase();
   if (lower === "critical") {
@@ -159,11 +217,13 @@ function NavSidebar({
   onClose,
   activeIndex,
   onNavSelect,
+  onLogout,
 }: {
   open: boolean;
   onClose: () => void;
   activeIndex: number;
   onNavSelect: (index: number) => void;
+  onLogout: () => void;
 }) {
   return (
     <>
@@ -208,7 +268,10 @@ function NavSidebar({
         </nav>
 
         <div className="border-t border-white/[0.06] p-4">
-          <button className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-white/50 transition hover:bg-white/[0.04] hover:text-white">
+          <button
+            onClick={onLogout}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-white/50 transition hover:bg-white/[0.04] hover:text-white"
+          >
             <span className="h-2.5 w-2.5 rounded-full bg-white/20" />
             <span className="text-[15px] font-medium">Logout</span>
           </button>
@@ -297,10 +360,16 @@ function MetricCard({
   }[variant];
 
   return (
-    <div className={`rounded-2xl border p-4 ${accentColor}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-current opacity-60">{label}</p>
-      <p className="mt-2 text-3xl font-bold text-current tabular-nums">{value}</p>
-      <p className="mt-2 text-xs leading-relaxed text-white/50 line-clamp-2">{subtext}</p>
+    <div className={`rounded-lg border px-2 py-1.5 sm:rounded-xl sm:p-3 ${accentColor}`}>
+      <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-[0.14em] text-current opacity-60">
+        {label}
+      </p>
+      <p className="mt-0.5 text-sm sm:mt-1 sm:text-2xl font-bold text-current tabular-nums">
+        {value}
+      </p>
+      <p className="mt-0.5 line-clamp-1 text-[9px] sm:mt-1 sm:line-clamp-2 sm:text-[11px] leading-relaxed text-white/50">
+        {subtext}
+      </p>
     </div>
   );
 }
@@ -563,7 +632,16 @@ export default function LiveIntelligencePage() {
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [loadingIntel, setLoadingIntel] = useState(Boolean(authToken));
   const [selectedIncident, setSelectedIncident] = useState<SelectedIncident | null>(null);
-  const [rightMode, setRightMode] = useState<'controls' | 'incident'>('controls');
+  const [rightMode, setRightMode] = useState<"controls" | "incident" | "filter">("controls");
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+
+  function handleLogout() {
+    window.localStorage.removeItem("geopulse.token");
+    window.localStorage.removeItem("geopulse.user");
+    window.location.assign("/login");
+  }
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
@@ -640,6 +718,34 @@ export default function LiveIntelligencePage() {
     [incidents],
   );
 
+  const activeRadiusKm = useMemo(() => {
+    if (selectedStreet || exactPin) return 10;
+    if (selectedCity) return 25;
+    if (selectedState) return 120;
+    return null;
+  }, [exactPin, selectedCity, selectedState, selectedStreet]);
+
+  const scopedIncidentPoints = useMemo(() => {
+    return incidentPoints.filter((incident) => {
+      if (!matchesDatePreset(incident.detectedAt, datePreset, customStartDate, customEndDate)) {
+        return false;
+      }
+
+      if (!mapFocus || activeRadiusKm === null) {
+        return true;
+      }
+
+      return (
+        haversineKilometers(
+          incident.latitude,
+          incident.longitude,
+          mapFocus.latitude,
+          mapFocus.longitude,
+        ) <= activeRadiusKm
+      );
+    });
+  }, [activeRadiusKm, customEndDate, customStartDate, datePreset, incidentPoints, mapFocus]);
+
   const watchZonePoints = useMemo(
     () =>
       watchZones.flatMap((zone) => {
@@ -660,6 +766,23 @@ export default function LiveIntelligencePage() {
     [watchZones],
   );
 
+  const scopedWatchZonePoints = useMemo(() => {
+    return watchZonePoints.filter((zone) => {
+      if (!mapFocus || activeRadiusKm === null) {
+        return true;
+      }
+
+      return (
+        haversineKilometers(
+          zone.latitude,
+          zone.longitude,
+          mapFocus.latitude,
+          mapFocus.longitude,
+        ) <= activeRadiusKm
+      );
+    });
+  }, [activeRadiusKm, mapFocus, watchZonePoints]);
+
   const locationLabel = useMemo(() => {
     const parts = [selectedState, selectedCity, selectedStreet].filter(Boolean);
     if (exactPin) {
@@ -670,9 +793,9 @@ export default function LiveIntelligencePage() {
     return selectedState || "Nigeria";
   }, [exactPin, mapFocus, selectedCity, selectedState, selectedStreet]);
 
-  const liveReportCount = incidentPoints.length;
-  const activeThreatCount = incidentPoints.filter((incident) => incident.severity === "high" || incident.severity === "critical").length;
-  const movingMarkerCount = watchZonePoints.length;
+  const liveReportCount = scopedIncidentPoints.length;
+  const activeThreatCount = scopedIncidentPoints.filter((incident) => incident.severity === "high" || incident.severity === "critical").length;
+  const movingMarkerCount = scopedWatchZonePoints.length;
   const alertCount = alerts.filter((alert) => alert.level !== "Info").length;
 
   const metrics = [
@@ -685,7 +808,7 @@ export default function LiveIntelligencePage() {
     {
       label: "Moving Markers",
       value: String(movingMarkerCount),
-      subtext: loadingIntel ? "Tracking zone movement..." : `${watchZonePoints.filter((zone) => zone.riskLevel === "high" || zone.riskLevel === "critical").length} elevated zones`,
+      subtext: loadingIntel ? "Tracking zone movement..." : `${scopedWatchZonePoints.filter((zone) => zone.riskLevel === "high" || zone.riskLevel === "critical").length} elevated zones`,
       variant: movingMarkerCount > 0 ? "warning" : "default",
     },
     {
@@ -702,6 +825,69 @@ export default function LiveIntelligencePage() {
     },
   ] as const;
 
+  const activeSelectedIncident = useMemo(() => {
+    if (!selectedIncident) return null;
+    return scopedIncidentPoints.find((incident) => incident.id === selectedIncident.id) ?? null;
+  }, [scopedIncidentPoints, selectedIncident]);
+
+  const filterPanel = (
+    <div className="grid gap-3">
+      <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-amber-400">Date Filter</p>
+            <p className="mt-2 text-sm font-semibold text-white">Incidents in current area</p>
+            <p className="mt-1 text-xs leading-5 text-white/45">
+              Showing {scopedIncidentPoints.length} incident{scopedIncidentPoints.length === 1 ? "" : "s"}
+              {activeRadiusKm ? ` within ~${activeRadiusKm}km` : ""}.
+            </p>
+          </div>
+          <div className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-400">
+            {datePreset === "all" ? "All time" : datePreset === "today" ? "Today" : datePreset === "7d" ? "Last 7d" : datePreset === "30d" ? "Last 30d" : "Custom"}
+          </div>
+        </div>
+      </div>
+
+      <label className="grid gap-1.5">
+        <span className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-white/35">Time Window</span>
+        <select
+          value={datePreset}
+          onChange={(event) => setDatePreset(event.target.value as DatePreset)}
+          className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60"
+        >
+          <option value="all">All time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="custom">Custom range</option>
+        </select>
+      </label>
+
+      {datePreset === "custom" ? (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="grid gap-1.5">
+            <span className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-white/35">Start</span>
+            <input
+              type="date"
+              value={customStartDate}
+              onChange={(event) => setCustomStartDate(event.target.value)}
+              className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60"
+            />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-white/35">End</span>
+            <input
+              type="date"
+              value={customEndDate}
+              onChange={(event) => setCustomEndDate(event.target.value)}
+              className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60"
+            />
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
+
   if (!mounted) return null;
 
   return (
@@ -712,6 +898,7 @@ export default function LiveIntelligencePage() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         activeIndex={activeNav}
+        onLogout={handleLogout}
         onNavSelect={(index) => {
           setActiveNav(index);
           if (index === 0) router.push("/dashboard");
@@ -741,8 +928,8 @@ export default function LiveIntelligencePage() {
               zoom={zoom}
               mapStyle={mapStyle}
               exactPin={exactPin}
-              incidents={incidentPoints}
-              watchZones={watchZonePoints}
+              incidents={scopedIncidentPoints}
+              watchZones={scopedWatchZonePoints}
               onMapStyleChange={setMapStyle}
               onStateChange={(nextState) => {
                 setSelectedState(nextState);
@@ -759,31 +946,19 @@ export default function LiveIntelligencePage() {
               onExactPinChange={setExactPin}
               onFocusChange={setMapFocus}
               onIncidentSelect={(inc) => {
-                const mapped: SelectedIncident = {
-                  id: inc.id,
-                  title: inc.title,
-                  incidentType: inc.incidentType,
-                  severity: inc.severity,
-                  confidence: inc.confidence,
-                  status: inc.status,
-                  summary: inc.summary,
-                  detectedAt: inc.detectedAt,
-                  latitude: inc.latitude,
-                  longitude: inc.longitude,
-                  locationName: inc.locationName,
-                };
-                setSelectedIncident(mapped);
+                setSelectedIncident(inc);
                 setRightMode('incident');
               }}
-              selectedIncident={selectedIncident}
+              selectedIncident={activeSelectedIncident}
               onClearSelectedIncident={() => {
                 setSelectedIncident(null);
                 setRightMode('controls');
               }}
+              filterPanel={filterPanel}
             />
 
-            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 p-4">
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 p-1.5 sm:p-3">
+              <div className="grid grid-cols-2 gap-1.5 sm:gap-2 sm:grid-cols-4">
                 {metrics.map((metric) => (
                   <MetricCard key={metric.label} {...metric} />
                 ))}
@@ -792,56 +967,14 @@ export default function LiveIntelligencePage() {
           </section>
 
           <aside className="hidden lg:flex min-h-0 flex-col overflow-hidden border-t border-white/[0.06] bg-[#090F1E] lg:border-l lg:border-t-0">
-            {rightMode === 'controls' ? (
-              <div className="p-4 flex-1">
-                <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-cyan-400">Map controls</p>
-                  <div className="mt-3" id="live-intelligence-map-controls" />
-                </div>
-                <div className="mt-4 text-right">
-                  <button
-                    className="text-sm text-white/60 underline"
-                    onClick={() => setRightMode('incident')}
-                  >
-                    Toggle to incident view
-                  </button>
-                </div>
+            <div className="p-4 flex-1">
+              <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
+                <p className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-cyan-400">
+                  {rightMode === "incident" ? "Incident Details" : rightMode === "filter" ? "Date Filter" : "Map Controls"}
+                </p>
+                <div className="mt-3" id="live-intelligence-map-controls" />
               </div>
-            ) : (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {selectedIncident ? (
-                  <div className="flex-1 overflow-y-auto">
-                    <div className="flex items-center justify-between border-b border-white/[0.06] p-4">
-                      <h3 className="font-semibold">Incident detail</h3>
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="text-sm text-white/60"
-                          onClick={() => {
-                            setSelectedIncident(null);
-                            setRightMode('controls');
-                          }}
-                        >
-                          Close
-                        </button>
-                      </div>
-                    </div>
-                    <div className="p-4">
-                      <IncidentDetail
-                        incident={selectedIncident}
-                        onBack={() => {
-                          setSelectedIncident(null);
-                          setRightMode('controls');
-                        }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="p-4">
-                    <p className="text-sm text-white/50">No incident selected.</p>
-                  </div>
-                )}
-              </div>
-            )}
+            </div>
           </aside>
         </div>
       </div>

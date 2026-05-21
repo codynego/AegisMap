@@ -155,11 +155,13 @@ function NavSidebar({
   onClose,
   activeIndex,
   onNavSelect,
+  onLogout,
 }: {
   open: boolean;
   onClose: () => void;
   activeIndex: number;
   onNavSelect: (index: number) => void;
+  onLogout: () => void;
 }) {
   return (
     <>
@@ -204,7 +206,10 @@ function NavSidebar({
         </nav>
 
         <div className="border-t border-white/[0.06] p-4">
-          <button className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-white/50 transition hover:bg-white/[0.04] hover:text-white">
+          <button
+            onClick={onLogout}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-white/50 transition hover:bg-white/[0.04] hover:text-white"
+          >
             <span className="h-2.5 w-2.5 rounded-full bg-white/20" />
             <span className="text-[15px] font-medium">Logout</span>
           </button>
@@ -817,6 +822,12 @@ export default function DashboardPage() {
   const [loadingIntel, setLoadingIntel] = useState(Boolean(authToken));
   const [selectedIncident, setSelectedIncident] = useState<SelectedIncident | null>(null);
 
+  function handleLogout() {
+    window.localStorage.removeItem("geopulse.token");
+    window.localStorage.removeItem("geopulse.user");
+    window.location.assign("/login");
+  }
+
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
@@ -963,6 +974,7 @@ export default function DashboardPage() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         activeIndex={activeNav}
+        onLogout={handleLogout}
         onNavSelect={(index) => {
           setActiveNav(index);
           if (index === 0) {
