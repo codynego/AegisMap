@@ -107,6 +107,10 @@ a {
   animation: pulse-cyan 3s infinite;
 }
 
+.incident-blink {
+  animation: incident-blink 1.1s infinite;
+}
+
 .hud-grid {
   background-image:
     linear-gradient(rgb(76 215 246 / 0.04) 1px, transparent 1px),
@@ -123,5 +127,17 @@ a {
   }
   100% {
     box-shadow: 0 0 0 0 rgb(6 182 212 / 0);
+  }
+}
+
+@keyframes incident-blink {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(1.18);
   }
 }

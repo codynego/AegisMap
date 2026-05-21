@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -48,7 +47,6 @@ function splitDisplayName(displayName: string) {
 }
 
 export function AuthForm({ mode }: AuthFormProps) {
-  const router = useRouter();
   const isLogin = mode === "login";
 
   const [username, setUsername] = useState("");
@@ -129,7 +127,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       window.localStorage.setItem("geopulse.token", data.token);
       window.localStorage.setItem("geopulse.user", JSON.stringify(data.user));
-      router.push("/dashboard");
+      window.location.assign("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to complete the request.");
     } finally {

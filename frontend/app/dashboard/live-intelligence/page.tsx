@@ -1,7 +1,9 @@
 "use client";
 
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+
+import { DashboardMap } from "@/components/dashboard-map";
 
 type DashboardAlert = {
   id: number;
@@ -88,6 +90,8 @@ const INCIDENT_LEGEND = [
   { label: "Fire / Smoke", color: "#ff9b52" },
   { label: "Flood", color: "#46c0ff" },
 ] as const;
+
+// Live activity feed items removed — keep the sidebar focused on map controls and incident detail.
 
 function relativeTime(value?: string | null) {
   if (!value) return "Now";
@@ -214,6 +218,8 @@ function NavSidebar({
   );
 }
 
+// NavSidebar removed — dashboard overview is now sidebar-free.
+
 function TopBar({
   onMenuOpen,
   onNotificationsOpen,
@@ -236,10 +242,10 @@ function TopBar({
           <MenuIcon />
         </button>
 
-        <div className="hidden items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5 sm:flex">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#4edea3]" />
-          <span className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-emerald-400">
-            System Active
+        <div className="hidden items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5 sm:flex">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#4cd7f6]" />
+          <span className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-cyan-400">
+            Live Monitor
           </span>
         </div>
 
@@ -258,7 +264,7 @@ function TopBar({
           {alertCount > 0 ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-400" /> : null}
         </button>
 
-        <div className="flex items-center gap-2.5 border-l border-white/[0.06] pl-3">
+        <div className="hidden items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 sm:flex">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400/30 to-blue-500/20 ring-1 ring-cyan-400/30">
             <span className="text-[10px] font-semibold text-cyan-300">VT</span>
           </div>
@@ -294,7 +300,7 @@ function MetricCard({
     <div className={`rounded-2xl border p-4 ${accentColor}`}>
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-current opacity-60">{label}</p>
       <p className="mt-2 text-3xl font-bold text-current tabular-nums">{value}</p>
-      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/50">{subtext}</p>
+      <p className="mt-2 text-xs leading-relaxed text-white/50 line-clamp-2">{subtext}</p>
     </div>
   );
 }
@@ -312,237 +318,6 @@ function AlertItem({ alert }: { alert: DashboardAlert }) {
         <p className="mt-2 text-[11px] uppercase tracking-wider text-emerald-400/70">{alert.meta}</p>
       ) : null}
     </div>
-  );
-}
-
-function isSameDay(value?: string | null) {
-  if (!value) return false;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return false;
-  const now = new Date();
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
-}
-
-function buildHourlySeries(values: Array<string | null | undefined>, buckets = 6) {
-  const series = Array.from({ length: buckets }, () => 0);
-  const now = Date.now();
-
-  for (const value of values) {
-    if (!value) continue;
-    const timestamp = new Date(value).getTime();
-    if (Number.isNaN(timestamp)) continue;
-    const deltaHours = Math.floor((now - timestamp) / 3600000);
-    if (deltaHours < 0 || deltaHours >= buckets) continue;
-    const bucketIndex = buckets - 1 - deltaHours;
-    series[bucketIndex] += 1;
-  }
-
-  return series;
-}
-
-function SparklineCard({
-  title,
-  subtitle,
-  data,
-  accent,
-}: {
-  title: string;
-  subtitle: string;
-  data: number[];
-  accent: string;
-}) {
-  const peak = Math.max(...data, 1);
-  const points = data
-    .map((value, index) => {
-      const x = data.length === 1 ? 50 : (index / (data.length - 1)) * 100;
-      const y = 88 - (value / peak) * 64;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
-  return (
-    <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/78 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-semibold text-white">{title}</p>
-          <p className="mt-1 text-xs text-white/40">{subtitle}</p>
-        </div>
-        <span className={`h-2.5 w-2.5 rounded-full ${accent}`} />
-      </div>
-      <div className="mt-4 h-24 overflow-hidden rounded-xl border border-white/[0.05] bg-white/[0.02] p-2">
-        <svg viewBox="0 0 100 100" className="h-full w-full" preserveAspectRatio="none">
-          <polyline
-            points={points}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            className={accent}
-          />
-        </svg>
-      </div>
-    </div>
-  );
-}
-
-function OverviewPanel({
-  incidents,
-  watchZones,
-  alerts,
-  selectedIncident,
-  loading,
-}: {
-  incidents: SelectedIncident[];
-  watchZones: Array<{
-    id: number;
-    name: string;
-    riskLevel: string;
-    riskScore: number;
-  }>;
-  alerts: DashboardAlert[];
-  selectedIncident: SelectedIncident | null;
-  loading: boolean;
-}) {
-  const todayIncidentCount = incidents.filter((incident) => isSameDay(incident.detectedAt)).length;
-  const highSeverityCount = incidents.filter((incident) => incident.severity === "high" || incident.severity === "critical").length;
-  const elevatedZoneCount = watchZones.filter((zone) => zone.riskLevel === "high" || zone.riskLevel === "critical").length;
-  const actionAlertCount = alerts.filter((alert) => alert.level !== "Info").length;
-  const dominantIncident = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const incident of incidents) {
-      counts.set(incident.incidentType, (counts.get(incident.incidentType) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "No incidents yet";
-  }, [incidents]);
-  const topZone = [...watchZones].sort((a, b) => b.riskScore - a.riskScore)[0];
-  const incidentTrend = buildHourlySeries(incidents.map((incident) => incident.detectedAt));
-  const alertTrend = buildHourlySeries(alerts.map((alert) => alert.triggeredAt));
-  const zoneTrend = [
-    watchZones.filter((zone) => zone.riskLevel === "low").length,
-    watchZones.filter((zone) => zone.riskLevel === "medium").length,
-    watchZones.filter((zone) => zone.riskLevel === "high").length,
-    watchZones.filter((zone) => zone.riskLevel === "critical").length,
-  ];
-
-  const aiSummaries = [
-    {
-      label: "Situational Readout",
-      title: `${todayIncidentCount} incidents today`,
-      body: highSeverityCount > 0
-        ? `${highSeverityCount} high-severity incident${highSeverityCount === 1 ? "" : "s"} are driving the current risk picture.`
-        : "No high-severity incidents are active at the moment.",
-      tone: "text-cyan-400",
-    },
-    {
-      label: "Threat Focus",
-      title: `${actionAlertCount} active alerts`,
-      body: elevatedZoneCount > 0
-        ? `${elevatedZoneCount} high-risk zone${elevatedZoneCount === 1 ? "" : "s"} need active watch. Dominant pattern: ${dominantIncident}.`
-        : `Threat pressure remains contained. Dominant pattern: ${dominantIncident}.`,
-      tone: "text-amber-400",
-    },
-    {
-      label: "AI Summary",
-      title: topZone ? topZone.name : "All zones nominal",
-      body: topZone
-        ? `Top watch-zone pressure is ${topZone.riskScore.toFixed(0)} points in ${topZone.riskLevel.toUpperCase()} mode.`
-        : "No watch zone pressure is currently elevated.",
-      tone: "text-emerald-400",
-    },
-  ];
-
-  return (
-    <aside className="space-y-5 bg-[#090F1E]">
-      <div className="border-b border-white/[0.06] px-5 py-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-cyan-400">High-level overview</p>
-            <h2 className="mt-2 text-2xl font-bold tracking-[-0.03em] text-white">What&apos;s happening right now?</h2>
-            <p className="mt-2 text-sm leading-6 text-white/45">
-              Quick situational awareness across incidents, threats, alerts, AI summaries, trend graphs, and live activity.
-            </p>
-          </div>
-          <div className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400">
-            Overview Mode
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-5 px-4 pb-6">
-        {selectedIncident ? (
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-cyan-400">Selected incident</p>
-                <p className="mt-2 text-base font-semibold text-white">{selectedIncident.title}</p>
-                <p className="mt-1 text-xs text-white/40">{selectedIncident.locationName || "Mapped incident point"}</p>
-              </div>
-              <SeverityBadge level={selectedIncident.severity} />
-            </div>
-            <p className="mt-3 text-sm leading-6 text-white/55">{selectedIncident.summary || "No summary available."}</p>
-          </div>
-        ) : null}
-
-        {loading ? (
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4 text-sm text-white/45">
-            Syncing overview data from live sources.
-          </div>
-        ) : null}
-
-        <div className="grid gap-3">
-          {aiSummaries.map((item) => (
-            <div key={item.label} className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-              <p className={`font-mono-ui text-[10px] uppercase tracking-[0.18em] ${item.tone}`}>{item.label}</p>
-              <p className="mt-2 text-base font-semibold text-white">{item.title}</p>
-              <p className="mt-2 text-sm leading-6 text-white/55">{item.body}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid gap-3 xl:grid-cols-3">
-          <SparklineCard title="Incident trend" subtitle="Incidents by hour" data={incidentTrend} accent="text-cyan-400" />
-          <SparklineCard title="Alert flow" subtitle="Alerts by hour" data={alertTrend} accent="text-amber-400" />
-          <SparklineCard title="Zone pressure" subtitle="Risk distribution" data={zoneTrend} accent="text-emerald-400" />
-        </div>
-
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-          <p className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-cyan-400">Recent alerts</p>
-          <div className="mt-3 space-y-3">
-            {alerts.slice(0, 4).map((alert) => (
-              <AlertItem key={alert.id} alert={alert} />
-            ))}
-            {alerts.length === 0 ? (
-              <p className="text-sm text-white/35">No recent alerts.</p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-          <p className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-emerald-400">Live activity</p>
-          <div className="mt-3 space-y-3">
-            {[...incidents]
-              .sort((a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime())
-              .slice(0, 4)
-              .map((incident) => (
-                <div key={incident.id} className="rounded-xl border border-white/[0.06] bg-[#0A1020]/75 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="font-semibold text-white">{incident.title}</p>
-                    <span className="whitespace-nowrap text-[11px] tabular-nums text-white/30">{relativeTime(incident.detectedAt)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-white/40">{incident.locationName || "Mapped incident point"}</p>
-                  <p className="mt-2 text-sm leading-6 text-white/55">{incident.summary || "Incoming activity captured in the live feed."}</p>
-                </div>
-              ))}
-            {incidents.length === 0 ? <p className="text-sm text-white/35">No live activity yet.</p> : null}
-          </div>
-        </div>
-      </div>
-    </aside>
   );
 }
 
@@ -596,88 +371,6 @@ function IncidentDetail({
             {incident.summary || "No incident summary available."}
           </p>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function IntelPanel({
-  alerts,
-  loading,
-  selectedIncident,
-  onClearSelection,
-  controlsSlot,
-}: {
-  alerts: DashboardAlert[];
-  loading: boolean;
-  selectedIncident: SelectedIncident | null;
-  onClearSelection: () => void;
-  controlsSlot?: ReactNode;
-}) {
-  if (selectedIncident) {
-    return <IncidentDetail incident={selectedIncident} onBack={onClearSelection} />;
-  }
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-white/[0.06] px-5 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-bold text-white">Live Intelligence</h2>
-            <p className="mt-0.5 text-xs text-white/40">Real-Time Incident Feed</p>
-          </div>
-          <div className="flex items-center gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
-            <span className="text-xs font-medium text-cyan-400">{alerts.length} ACTIVE</span>
-          </div>
-        </div>
-      </div>
-
-      {controlsSlot ? <div className="border-b border-white/[0.06] p-4">{controlsSlot}</div> : null}
-
-      <div className="border-b border-white/[0.06] p-5">
-        <p className="mb-3 text-[10px] uppercase tracking-wider text-white/30">Incident Types</p>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {INCIDENT_LEGEND.map(({ label, color }) => (
-            <div key={label} className="flex items-center gap-2">
-              <span
-                className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-                style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}88` }}
-              />
-              <span className="truncate text-[11px] text-white/50">{label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {loading ? (
-          <div className="space-y-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-xl bg-white/[0.04]" />
-            ))}
-          </div>
-        ) : null}
-
-        {!loading && alerts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-white/[0.04]">
-              <ClipboardIcon />
-            </div>
-            <p className="text-sm font-medium text-white/40">No active alerts</p>
-            <p className="mt-1 text-xs text-white/20">Click a map incident to inspect details</p>
-          </div>
-        ) : null}
-
-        {alerts.map((alert) => (
-          <AlertItem key={alert.id} alert={alert} />
-        ))}
-      </div>
-
-      <div className="border-t border-white/[0.06] p-4">
-        <button className="w-full rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-500/20 active:scale-[0.98]">
-          Execute Countermeasures
-        </button>
       </div>
     </div>
   );
@@ -795,12 +488,66 @@ function LiveActivityBoard({
   );
 }
 
-export default function DashboardPage() {
+function LivePulseCard({
+  label,
+  title,
+  body,
+}: {
+  label: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
+      <p className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-cyan-400">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-white">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-white/55">{body}</p>
+    </div>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118.6 14.6V11c0-3.07-1.63-5.64-4.5-6.32V4a1.5 1.5 0 10-3 0v.68C7.63 5.36 6 7.92 6 11v3.6c0 .53-.21 1.04-.595 1.415L4 17h5" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  );
+}
+
+function CloseIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
+export default function LiveIntelligencePage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [intelOpen, setIntelOpen] = useState(false);
-  const [activeNav, setActiveNav] = useState(0);
+  const [activeNav, setActiveNav] = useState(1);
   const [selectedState, setSelectedState] = useState("Lagos");
   const [selectedCity, setSelectedCity] = useState("");
   const [selectedStreet, setSelectedStreet] = useState("");
@@ -816,6 +563,7 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [loadingIntel, setLoadingIntel] = useState(Boolean(authToken));
   const [selectedIncident, setSelectedIncident] = useState<SelectedIncident | null>(null);
+  const [rightMode, setRightMode] = useState<'controls' | 'incident'>('controls');
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
@@ -922,34 +670,35 @@ export default function DashboardPage() {
     return selectedState || "Nigeria";
   }, [exactPin, mapFocus, selectedCity, selectedState, selectedStreet]);
 
-  const highSeverityCount = incidentPoints.filter((i) => i.severity === "high" || i.severity === "critical").length;
-  const elevatedZoneCount = watchZonePoints.filter((z) => z.riskLevel === "high" || z.riskLevel === "critical").length;
-  const actionAlertCount = alerts.filter((a) => a.level !== "Info").length;
+  const liveReportCount = incidentPoints.length;
+  const activeThreatCount = incidentPoints.filter((incident) => incident.severity === "high" || incident.severity === "critical").length;
+  const movingMarkerCount = watchZonePoints.length;
+  const alertCount = alerts.filter((alert) => alert.level !== "Info").length;
 
   const metrics = [
     {
-      label: "Active Incidents",
-      value: String(incidentPoints.length),
-      subtext: loadingIntel ? "Loading data..." : `${highSeverityCount} high-severity`,
-      variant: highSeverityCount > 0 ? "danger" : "default",
+      label: "Live Reports",
+      value: String(liveReportCount),
+      subtext: loadingIntel ? "Loading live reports..." : `${activeThreatCount} high-severity reports`,
+      variant: activeThreatCount > 0 ? "danger" : "default",
     },
     {
-      label: "Watch Zones",
-      value: String(watchZonePoints.length),
-      subtext: loadingIntel ? "Loading data..." : `${elevatedZoneCount} elevated risk`,
-      variant: elevatedZoneCount > 0 ? "warning" : "default",
+      label: "Moving Markers",
+      value: String(movingMarkerCount),
+      subtext: loadingIntel ? "Tracking zone movement..." : `${watchZonePoints.filter((zone) => zone.riskLevel === "high" || zone.riskLevel === "critical").length} elevated zones`,
+      variant: movingMarkerCount > 0 ? "warning" : "default",
     },
     {
-      label: "Location Pin",
-      value: exactPin ? "Pinned" : "Standby",
-      subtext: exactPin ? `${exactPin.latitude.toFixed(4)}, ${exactPin.longitude.toFixed(4)}` : "Tap map or search to pin",
-      variant: exactPin ? "success" : "default",
-    },
-    {
-      label: "Alert Feed",
+      label: "Real-time Alerts",
       value: String(alerts.length),
-      subtext: loadingIntel ? "Syncing feed..." : `${actionAlertCount} require attention`,
-      variant: actionAlertCount > 0 ? "warning" : "default",
+      subtext: loadingIntel ? "Syncing alerts..." : `${alertCount} require attention`,
+      variant: alertCount > 0 ? "warning" : "default",
+    },
+    {
+      label: "Streaming Feed",
+      value: "Live",
+      subtext: "Reports, patrol updates, and alerts are refreshing continuously.",
+      variant: "success",
     },
   ] as const;
 
@@ -965,133 +714,97 @@ export default function DashboardPage() {
         activeIndex={activeNav}
         onNavSelect={(index) => {
           setActiveNav(index);
-          if (index === 0) {
-            router.push("/dashboard");
-          }
-          if (index === 1) {
-            router.push("/dashboard/live-intelligence");
-          }
+          if (index === 0) router.push("/dashboard");
+          if (index === 1) router.push("/dashboard/live-intelligence");
         }}
       />
-
-      {intelOpen ? (
-        <>
-          <button
-            aria-label="Close overview panel"
-            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
-            onClick={() => setIntelOpen(false)}
-          />
-          <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-sm flex-col overflow-y-auto border-l border-white/[0.06] bg-[#0A1020] lg:hidden">
-            <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
-              <h3 className="font-semibold text-white">Overview</h3>
-              <button
-                aria-label="Close"
-                onClick={() => setIntelOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white"
-              >
-                <CloseIcon size={16} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <OverviewPanel
-                incidents={incidentPoints}
-                watchZones={watchZonePoints}
-                alerts={alerts}
-                loading={loadingIntel}
-                selectedIncident={selectedIncident}
-              />
-            </div>
-          </div>
-        </>
-      ) : null}
 
       <div className="lg:ml-72">
         <TopBar
           onMenuOpen={() => setSidebarOpen(true)}
+          onNotificationsOpen={() => setRightMode('incident')}
           locationLabel={locationLabel}
-          onNotificationsOpen={() => setIntelOpen(true)}
           alertCount={alerts.length}
         />
 
-        <div className="border-b border-white/[0.06] bg-[#08101f]/70 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="font-mono-ui text-[10px] uppercase tracking-[0.24em] text-cyan-400">High-level overview</p>
-              <h2 className="mt-2 text-2xl font-bold tracking-[-0.03em] text-white">What&apos;s happening right now?</h2>
-              <p className="mt-1 text-sm text-white/45">
-                Quick situational awareness across incidents, active threats, alerts, AI summaries, trend graphs, and live activity.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-4 py-2">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-400" />
-              <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-cyan-400">Overview mode</span>
-            </div>
-          </div>
-        </div>
+        {/* Monitoring header removed as requested */}
 
-        <div className="px-4 py-4 sm:px-6 lg:px-8">
-          <section className="space-y-4">
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              {metrics.map((metric) => (
-                <MetricCard key={metric.label} {...metric} />
-              ))}
-            </div>
-
-            <OverviewPanel
+        <div className="grid h-[calc(100dvh-56px)] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+          <section className="relative overflow-hidden">
+            <DashboardMap
+              selectedState={selectedState}
+              selectedCity={selectedCity}
+              selectedStreet={selectedStreet}
+              zoom={zoom}
+              mapStyle={mapStyle}
+              exactPin={exactPin}
               incidents={incidentPoints}
               watchZones={watchZonePoints}
-              alerts={alerts}
-              loading={loadingIntel}
-              selectedIncident={selectedIncident}
+              onMapStyleChange={setMapStyle}
+              onStateChange={(nextState) => {
+                setSelectedState(nextState);
+                setSelectedCity("");
+                setSelectedStreet("");
+                setExactPin(null);
+              }}
+              onCityChange={(nextCity) => {
+                setSelectedCity(nextCity);
+                setSelectedStreet("");
+              }}
+              onStreetChange={setSelectedStreet}
+              onZoomChange={setZoom}
+              onExactPinChange={setExactPin}
+              onFocusChange={setMapFocus}
+                onIncidentSelect={(inc) => {
+                  setSelectedIncident(inc);
+                  setRightMode('incident');
+                }}
             />
+
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 p-4">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                {metrics.map((metric) => (
+                  <MetricCard key={metric.label} {...metric} />
+                ))}
+              </div>
+            </div>
           </section>
+
+          <aside className="flex min-h-0 flex-col overflow-hidden border-t border-white/[0.06] bg-[#090F1E] lg:border-l lg:border-t-0 lg:flex lg:flex-col">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {selectedIncident ? (
+                <div className="flex-1 overflow-y-auto">
+                  <div className="flex items-center justify-between border-b border-white/[0.06] p-4">
+                    <h3 className="font-semibold">Incident detail</h3>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-sm text-white/60"
+                        onClick={() => {
+                          setSelectedIncident(null);
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <IncidentDetail
+                      incident={selectedIncident}
+                      onBack={() => {
+                        setSelectedIncident(null);
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4">
+                  <p className="text-sm text-white/50">No incident selected.</p>
+                </div>
+              )}
+            </div>
+          </aside>
         </div>
       </div>
     </div>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="18" x2="21" y2="18" />
-    </svg>
-  );
-}
-
-function CloseIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-
-function BellIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 17h5l-1.4-1.4a2 2 0 01-.6-1.4V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5" />
-      <path d="M9 17a3 3 0 006 0" />
-    </svg>
-  );
-}
-
-function ArrowLeftIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M19 12H5" />
-      <path d="M12 19l-7-7 7-7" />
-    </svg>
-  );
-}
-
-function ClipboardIcon() {
-  return (
-    <svg className="h-6 w-6 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-    </svg>
   );
 }
