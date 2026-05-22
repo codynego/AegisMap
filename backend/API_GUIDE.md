@@ -87,6 +87,11 @@ When `postgis` is enabled, Django uses the PostGIS backend and loads `django.con
 ## Bootstrap Utilities
 
 - `python manage.py bootstrap_alert_rules`
+- `python manage.py import_geofences bemis /path/to/schools.csv`
+- `python manage.py import_geofences grid3_settlements /path/to/settlements.geojson`
+- `python manage.py import_geofences grid3_settlement_extents /path/to/settlement_extents.geojson`
+- `python manage.py import_geofences grid3_roads /path/to/roads.geojson`
+- `python manage.py import_geofences osm /path/to/osm_export.geojson --dry-run`
 
 ## Async Processing
 

@@ -111,14 +111,16 @@ class Pattern(models.Model):
 
 
 class IncidentType(models.TextChoices):
-    THREAT_ACTIVITY = "threat_activity", "Threat Activity"
-    VIOLENCE = "violence", "Violence"
-    KIDNAPPING = "kidnapping", "Kidnapping"
+    SUSPICIOUS_ACTIVITY = "suspicious_activity", "Suspicious Activity"
+    ROAD_ACCIDENT = "road_accident", "Road Accident"
     ARMED_ROBBERY = "armed_robbery", "Armed Robbery"
-    ROAD_BLOCKADE = "road_blockade", "Road Blockade"
-    FIRE = "fire", "Fire"
-    FLOOD = "flood", "Flood"
-    OTHER = "other", "Other"
+    KIDNAPPING = "kidnapping", "Kidnapping"
+    FIRE_OUTBREAK = "fire_outbreak", "Fire Outbreak"
+    ROAD_OBSTRUCTION = "road_obstruction", "Road Obstruction"
+    FLOODING = "flooding", "Flooding"
+    MEDICAL_EMERGENCY = "medical_emergency", "Medical Emergency"
+    GUNSHOTS_HEARD = "gunshots_heard", "Gunshots Heard"
+    UNSAFE_ROUTE = "unsafe_route", "Unsafe Route"
 
 
 class Incident(models.Model):
@@ -126,7 +128,7 @@ class Incident(models.Model):
     incident_type = models.CharField(
         max_length=32,
         choices=IncidentType.choices,
-        default=IncidentType.THREAT_ACTIVITY,
+        default=IncidentType.SUSPICIOUS_ACTIVITY,
     )
     pattern = models.ForeignKey(
         Pattern,

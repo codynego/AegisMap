@@ -11,7 +11,7 @@ class IntelligencePromotionTests(TestCase):
             {
                 "title": "Movement report 1",
                 "description": "Night movement on route.",
-                "category": "suspicious_movement",
+                "category": "suspicious_activity",
                 "severity": "medium",
                 "latitude": "9.076500",
                 "longitude": "7.398600",
@@ -20,7 +20,7 @@ class IntelligencePromotionTests(TestCase):
             {
                 "title": "Movement report 2",
                 "description": "Another movement report nearby.",
-                "category": "suspicious_movement",
+                "category": "suspicious_activity",
                 "severity": "high",
                 "latitude": "9.076900",
                 "longitude": "7.398900",
@@ -29,7 +29,7 @@ class IntelligencePromotionTests(TestCase):
             {
                 "title": "Movement report 3",
                 "description": "Third corroborating signal nearby.",
-                "category": "suspicious_movement",
+                "category": "suspicious_activity",
                 "severity": "critical",
                 "latitude": "9.077100",
                 "longitude": "7.399100",

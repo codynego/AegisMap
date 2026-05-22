@@ -5,17 +5,16 @@ from django.db import models
 
 
 class SignalCategory(models.TextChoices):
-    TIP = "tip", "Tip"
-    SUSPICIOUS_MOVEMENT = "suspicious_movement", "Suspicious Movement"
-    ABNORMAL_SIGHTING = "abnormal_sighting", "Abnormal Sighting"
-    ROAD_THREAT = "road_threat", "Road Threat"
-    CAMP_INDICATOR = "camp_indicator", "Camp Indicator"
-    FIRE_SMOKE = "fire_smoke", "Fire / Smoke"
-    FLOOD = "flood", "Flood"
-    VIOLENCE = "violence", "Violence"
+    SUSPICIOUS_ACTIVITY = "suspicious_activity", "Suspicious Activity"
+    ROAD_ACCIDENT = "road_accident", "Road Accident"
     KIDNAPPING = "kidnapping", "Kidnapping"
     ARMED_ROBBERY = "armed_robbery", "Armed Robbery"
-    OTHER = "other", "Other"
+    FIRE_OUTBREAK = "fire_outbreak", "Fire Outbreak"
+    ROAD_OBSTRUCTION = "road_obstruction", "Road Obstruction"
+    FLOODING = "flooding", "Flooding"
+    MEDICAL_EMERGENCY = "medical_emergency", "Medical Emergency"
+    GUNSHOTS_HEARD = "gunshots_heard", "Gunshots Heard"
+    UNSAFE_ROUTE = "unsafe_route", "Unsafe Route"
 
 
 class SignalStatus(models.TextChoices):
@@ -70,7 +69,7 @@ class Signal(models.Model):
     category = models.CharField(
         max_length=32,
         choices=SignalCategory.choices,
-        default=SignalCategory.TIP,
+        default=SignalCategory.SUSPICIOUS_ACTIVITY,
     )
     status = models.CharField(
         max_length=16,

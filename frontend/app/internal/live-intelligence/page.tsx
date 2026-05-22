@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { DashboardMap } from "@/components/dashboard-map";
 import {
@@ -87,12 +87,12 @@ const API_BASE_URL =
   "http://127.0.0.1:8000/api";
 
 const NAV_ITEMS = [
-  "Home",
-  "Map",
-  "Report",
-  "Routes",
-  "Alerts",
-  "Profile",
+  "Dashboard",
+  "Live Intelligence",
+  "Incident Reports",
+  "Route Intelligence",
+  "AI Predictions",
+  "Drone Intelligence",
 ];
 
 // Live activity feed items removed — keep the sidebar focused on map controls and incident detail.
@@ -609,7 +609,6 @@ function ArrowLeftIcon() {
 
 export default function LiveIntelligencePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(1);
@@ -851,25 +850,6 @@ export default function LiveIntelligencePage() {
     return [...REPORT_TYPE_VALUES];
   }, []);
 
-  const emphasizeRecentIncidents = useMemo(() => {
-    if (datePreset !== "custom") {
-      return true;
-    }
-
-    if (!customEndDate) {
-      return true;
-    }
-
-    const selectedEnd = new Date(`${customEndDate}T23:59:59`);
-    if (Number.isNaN(selectedEnd.getTime())) {
-      return true;
-    }
-
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return selectedEnd >= startOfToday;
-  }, [customEndDate, datePreset]);
-
   function toggleLayer(layer: LayerFilterKey) {
     setLayerVisibility((current) => ({
       ...current,
@@ -923,16 +903,6 @@ export default function LiveIntelligencePage() {
     if (!selectedIncident) return null;
     return scopedIncidentPoints.find((incident) => incident.id === selectedIncident.id) ?? null;
   }, [scopedIncidentPoints, selectedIncident]);
-  const deepLinkedIncident = useMemo(() => {
-    const incidentParam = searchParams.get("incident");
-    if (!incidentParam) return null;
-    const incidentId = Number(incidentParam);
-    if (!Number.isFinite(incidentId)) return null;
-    return scopedIncidentPoints.find((incident) => incident.id === incidentId) ?? null;
-  }, [scopedIncidentPoints, searchParams]);
-  const resolvedSelectedIncident = activeSelectedIncident ?? deepLinkedIncident;
-  const resolvedRightMode =
-    !activeSelectedIncident && deepLinkedIncident ? "incident" : rightMode;
 
   const filterPanel = (
     <div className="grid gap-3">
@@ -1086,12 +1056,12 @@ export default function LiveIntelligencePage() {
         onLogout={handleLogout}
         onNavSelect={(index) => {
           setActiveNav(index);
-          if (index === 0) router.push("/dashboard");
-          if (index === 1) router.push("/dashboard/live-intelligence");
-          if (index === 2) router.push("/dashboard/incident-reports");
-          if (index === 3) router.push("/dashboard/route-intelligence");
-          if (index === 4) router.push("/dashboard/ai-predictions");
-          if (index === 5) router.push("/dashboard/drone-intelligence");
+          if (index === 0) router.push("/internal");
+          if (index === 1) router.push("/internal/live-intelligence");
+          if (index === 2) router.push("/internal/incident-reports");
+          if (index === 3) router.push("/internal/route-intelligence");
+          if (index === 4) router.push("/internal/ai-predictions");
+          if (index === 5) router.push("/internal/drone-intelligence");
         }}
       />
 
@@ -1109,7 +1079,7 @@ export default function LiveIntelligencePage() {
           <section className="relative overflow-hidden">
             <DashboardMap
               controlsTargetId="live-intelligence-map-controls"
-              mode={resolvedRightMode}
+              mode={rightMode}
               onRequestModeChange={(m) => setRightMode(m)}
               selectedState={selectedState}
               selectedCity={selectedCity}
@@ -1124,7 +1094,6 @@ export default function LiveIntelligencePage() {
               showHeatmap={layerVisibility.heatmaps}
               showRiskZones={layerVisibility.riskZones}
               showGeofencing={layerVisibility.geofencing}
-              emphasizeRecentIncidents={emphasizeRecentIncidents}
               onMapStyleChange={setMapStyle}
               onStateChange={(nextState) => {
                 setSelectedState(nextState);
@@ -1144,13 +1113,10 @@ export default function LiveIntelligencePage() {
                 setSelectedIncident(inc);
                 setRightMode('incident');
               }}
-              selectedIncident={resolvedSelectedIncident}
+              selectedIncident={activeSelectedIncident}
               onClearSelectedIncident={() => {
                 setSelectedIncident(null);
                 setRightMode('controls');
-                if (searchParams.get("incident")) {
-                  router.replace("/dashboard/live-intelligence");
-                }
               }}
               filterPanel={filterPanel}
             />
@@ -1168,7 +1134,7 @@ export default function LiveIntelligencePage() {
             <div className="flex-1 min-h-0 p-4">
               <div className="flex h-full min-h-0 flex-col rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
                 <p className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-cyan-400">
-                  {resolvedRightMode === "incident" ? "Incident Details" : resolvedRightMode === "filter" ? "Date Filter" : "Map Controls"}
+                  {rightMode === "incident" ? "Incident Details" : rightMode === "filter" ? "Date Filter" : "Map Controls"}
                 </p>
                 <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1" id="live-intelligence-map-controls" />
               </div>

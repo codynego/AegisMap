@@ -26,7 +26,7 @@ def process_ingestion_job(job: SignalIngestionJob) -> SignalIngestionJob:
                 title=item["title"],
                 description=item.get("description", ""),
                 source_profile_id=item.get("source_profile"),
-                category=item.get("category", "tip"),
+                category=item.get("category", "suspicious_activity"),
                 severity=item.get("severity", "low"),
                 location_name=item.get("location_name", ""),
                 latitude=item.get("latitude"),

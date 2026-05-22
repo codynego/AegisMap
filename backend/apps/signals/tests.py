@@ -20,7 +20,7 @@ class SignalIntelligenceFlowTests(TestCase):
             {
                 "title": "Suspicious movement",
                 "description": "Repeated motorcycle movement reported at night.",
-                "category": "suspicious_movement",
+                "category": "suspicious_activity",
                 "severity": "critical",
                 "latitude": "9.077000",
                 "longitude": "7.399000",
@@ -65,7 +65,7 @@ class SignalIntelligenceFlowTests(TestCase):
                         {
                             "title": "Bulk signal",
                             "description": "Imported signal",
-                            "category": "tip",
+                            "category": "suspicious_activity",
                             "severity": "low",
                         }
                     ]

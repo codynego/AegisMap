@@ -49,7 +49,7 @@ class AlertWorkflowTests(TestCase):
             {
                 "title": "Suspicious campfire sighting",
                 "description": "Campfire seen close to settlement boundary.",
-                "category": "camp_indicator",
+                "category": "suspicious_activity",
                 "severity": "high",
                 "latitude": "9.077000",
                 "longitude": "7.399000",

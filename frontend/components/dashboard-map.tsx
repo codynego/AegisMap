@@ -22,6 +22,8 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import mapboxgl from "mapbox-gl";
+import { normalizeReportType, reportTypeColor } from "@/lib/report-types";
+import { reverseGeocodeLocation, searchLocations, type LocationSearchResult } from "@/lib/location-search";
 
 // ─── Nigeria states ───────────────────────────────────────────────────────────
 
@@ -71,6 +73,7 @@ type SearchOption = {
   id: string;
   label: string;
   coordinates: [number, number];
+  state?: string;
 };
 
 type ExactPin = {
@@ -102,6 +105,30 @@ type WatchZonePoint = {
   longitude: number;
 };
 
+type GeofencePoint = {
+  id: number;
+  name: string;
+  geofenceType: string;
+  status: string;
+  description: string;
+  radiusMeters: number;
+  latitude: number;
+  longitude: number;
+};
+
+type RouteStop = {
+  label: string;
+  latitude: number;
+  longitude: number;
+  kind?: "origin" | "waypoint" | "destination";
+};
+
+type TrackedPosition = {
+  latitude: number;
+  longitude: number;
+  label?: string;
+};
+
 type DashboardMapProps = {
   selectedState?: string;
   selectedCity?: string;
@@ -111,6 +138,18 @@ type DashboardMapProps = {
   exactPin?: ExactPin | null;
   incidents?: IncidentPoint[];
   watchZones?: WatchZonePoint[];
+  geofences?: GeofencePoint[];
+  showIncidents?: boolean;
+  showHeatmap?: boolean;
+  showRiskZones?: boolean;
+  showGeofencing?: boolean;
+  emphasizeRecentIncidents?: boolean;
+  allowDirectPinDrop?: boolean;
+  showControlsUi?: boolean;
+  routePath?: Array<[number, number]>;
+  routeStops?: RouteStop[];
+  trackedPosition?: TrackedPosition | null;
+  followTrackedPosition?: boolean;
   onIncidentSelect?: (incident: IncidentPoint) => void;
   onMapStyleChange?: (value: string) => void;
   onStateChange?: (value: string) => void;
@@ -146,6 +185,15 @@ function fmtCoords(lat: number, lng: number) {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function severityColor(s: string) {
   if (s === "critical" || s === "high") return "#ff5f6d";
   if (s === "medium") return "#f8c15b";
@@ -153,18 +201,8 @@ function severityColor(s: string) {
 }
 
 function incidentColor(type: string, severity: string) {
-  const palette: Record<string, string> = {
-    kidnapping: "#ff5f6d",
-    armed_robbery: "#ff3f5a",
-    violence: "#f8c15b",
-    road_threat: "#ff9c5a",
-    suspicious_movement: "#4cd7f6",
-    abnormal_sighting: "#7fd0ff",
-    camp_indicator: "#8f7dff",
-    fire_smoke: "#ff9b52",
-    flood: "#46c0ff",
-  };
-  return palette[type] ?? severityColor(severity);
+  const color = reportTypeColor(normalizeReportType(type));
+  return color || severityColor(severity);
 }
 
 function riskColor(level: string) {
@@ -173,9 +211,66 @@ function riskColor(level: string) {
   return "#4edea3";
 }
 
+function geofenceColor(type: string) {
+  const palette: Record<string, string> = {
+    school: "#4cd7f6",
+    village: "#4edea3",
+    highway: "#f8c15b",
+    pipeline: "#ff9c5a",
+    facility: "#8f7dff",
+    custom: "#ff817a",
+  };
+  return palette[type] ?? "#4cd7f6";
+}
+
 function isFresh(incident: IncidentPoint) {
   const age = (Date.now() - new Date(incident.detectedAt).getTime()) / 60000;
   return age <= 180 && (incident.severity === "high" || incident.severity === "critical");
+}
+
+function getIncidentRecencyVisuals(
+  incident: IncidentPoint,
+  emphasizeRecentIncidents: boolean,
+) {
+  const detectedAtMs = new Date(incident.detectedAt).getTime();
+  if (Number.isNaN(detectedAtMs)) {
+    return {
+      opacity: emphasizeRecentIncidents ? 0.72 : 0.88,
+      size: emphasizeRecentIncidents ? 11 : 12,
+      glowAlpha: emphasizeRecentIncidents ? "66" : "88",
+      ringOpacity: emphasizeRecentIncidents ? 0.82 : 0.9,
+      heatmapWeight: 1,
+    };
+  }
+
+  const ageHours = Math.max(0, (Date.now() - detectedAtMs) / (1000 * 60 * 60));
+
+  if (!emphasizeRecentIncidents) {
+    return {
+      opacity: ageHours > 24 * 30 ? 0.76 : 0.88,
+      size: ageHours > 24 * 30 ? 11 : 12,
+      glowAlpha: ageHours > 24 * 30 ? "5c" : "82",
+      ringOpacity: 0.86,
+      heatmapWeight: ageHours > 24 * 30 ? 0.85 : 1,
+    };
+  }
+
+  if (ageHours <= 6) {
+    return { opacity: 1, size: 14, glowAlpha: "aa", ringOpacity: 0.96, heatmapWeight: 1.2 };
+  }
+  if (ageHours <= 24) {
+    return { opacity: 0.95, size: 13, glowAlpha: "96", ringOpacity: 0.93, heatmapWeight: 1.05 };
+  }
+  if (ageHours <= 72) {
+    return { opacity: 0.84, size: 12, glowAlpha: "80", ringOpacity: 0.9, heatmapWeight: 0.9 };
+  }
+  if (ageHours <= 24 * 7) {
+    return { opacity: 0.68, size: 11, glowAlpha: "64", ringOpacity: 0.82, heatmapWeight: 0.72 };
+  }
+  if (ageHours <= 24 * 30) {
+    return { opacity: 0.5, size: 10, glowAlpha: "4d", ringOpacity: 0.72, heatmapWeight: 0.5 };
+  }
+  return { opacity: 0.34, size: 9, glowAlpha: "36", ringOpacity: 0.62, heatmapWeight: 0.32 };
 }
 
 function makeCircle(color: string, size: number, active: boolean): HTMLElement {
@@ -199,22 +294,42 @@ function makeCircle(color: string, size: number, active: boolean): HTMLElement {
   return el;
 }
 
-function makeIncidentDot(color: string, blink: boolean): HTMLElement {
+function makeIncidentDot(
+  color: string,
+  blink: boolean,
+  options: {
+    opacity: number;
+    size: number;
+    glowAlpha: string;
+    ringOpacity: number;
+  },
+): HTMLElement {
   const el = document.createElement("button");
   el.type = "button";
   el.setAttribute("aria-label", "Incident");
   Object.assign(el.style, {
-    width: "12px",
-    height: "12px",
+    width: `${options.size}px`,
+    height: `${options.size}px`,
     borderRadius: "50%",
     background: color,
-    border: "2px solid rgba(255,255,255,0.9)",
-    boxShadow: `0 0 8px ${color}88`,
+    opacity: String(options.opacity),
+    border: `2px solid rgba(255,255,255,${options.ringOpacity})`,
+    boxShadow: `0 0 ${Math.max(8, options.size)}px ${color}${options.glowAlpha}`,
     cursor: "pointer",
+    transformOrigin: "center center",
+    transition: "opacity 0.15s, box-shadow 0.15s",
   });
   if (blink) {
     el.style.animation = "gp-blink 1.6s ease-in-out infinite";
   }
+  el.onmouseenter = () => {
+    el.style.opacity = "1";
+    el.style.boxShadow = `0 0 ${Math.max(10, options.size + 2)}px ${color}${options.glowAlpha}`;
+  };
+  el.onmouseleave = () => {
+    el.style.opacity = String(options.opacity);
+    el.style.boxShadow = `0 0 ${Math.max(8, options.size)}px ${color}${options.glowAlpha}`;
+  };
   return el;
 }
 
@@ -250,58 +365,54 @@ function makePinpoint(): HTMLElement {
   return wrap;
 }
 
+function makeRouteStopMarker(kind: RouteStop["kind"] = "waypoint"): HTMLElement {
+  const color =
+    kind === "origin" ? "#4edea3" : kind === "destination" ? "#ff5f6d" : "#f8c15b";
+  const el = document.createElement("div");
+  Object.assign(el.style, {
+    width: "18px",
+    height: "18px",
+    borderRadius: "999px",
+    background: color,
+    border: "2px solid rgba(255,255,255,0.95)",
+    boxShadow: `0 0 0 6px ${color}22, 0 4px 18px ${color}66`,
+  });
+  return el;
+}
+
+function makeTrackedPositionMarker(): HTMLElement {
+  const wrap = document.createElement("div");
+  Object.assign(wrap.style, {
+    position: "relative",
+    width: "26px",
+    height: "26px",
+  });
+  const ring = document.createElement("div");
+  Object.assign(ring.style, {
+    position: "absolute",
+    inset: "0",
+    borderRadius: "50%",
+    background: "rgba(76, 215, 246, 0.18)",
+    animation: "gp-pulse 1.8s infinite",
+  });
+  const dot = document.createElement("div");
+  Object.assign(dot.style, {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    width: "12px",
+    height: "12px",
+    transform: "translate(-50%, -50%)",
+    borderRadius: "50%",
+    background: "#4cd7f6",
+    border: "3px solid white",
+    boxShadow: "0 0 18px rgba(76,215,246,0.7)",
+  });
+  wrap.append(ring, dot);
+  return wrap;
+}
+
 // ─── Geocode fetch ────────────────────────────────────────────────────────────
-
-type GeoFeature = {
-  id?: string;
-  geometry?: { coordinates?: [number, number] };
-  properties?: {
-    full_address?: string;
-    place_formatted?: string;
-    name_preferred?: string;
-    name?: string;
-    context?: {
-      region?: { name?: string };
-      place?: { name?: string };
-      locality?: { name?: string };
-      street?: { name?: string };
-    };
-  };
-};
-
-function featureLabel(f: GeoFeature) {
-  return (
-    f.properties?.full_address ??
-    f.properties?.place_formatted ??
-    f.properties?.name_preferred ??
-    f.properties?.name ??
-    "Unknown"
-  );
-}
-
-async function geocode(
-  query: string,
-  token: string,
-  types: string,
-  extra: Record<string, string> = {},
-): Promise<SearchOption[]> {
-  const url = new URL("https://api.mapbox.com/search/geocode/v6/forward");
-  url.searchParams.set("q", query);
-  url.searchParams.set("types", types);
-  url.searchParams.set("country", "NG");
-  url.searchParams.set("limit", "8");
-  url.searchParams.set("access_token", token);
-  for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
-  const res = await fetch(url.toString());
-  const data = await res.json();
-  return (data.features ?? [])
-    .filter((f: GeoFeature) => f.geometry?.coordinates)
-    .map((f: GeoFeature, i: number) => ({
-      id: f.id ?? `${featureLabel(f)}-${i}`,
-      label: featureLabel(f),
-      coordinates: f.geometry!.coordinates!,
-    }));
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -314,6 +425,18 @@ export function DashboardMap({
   exactPin: initialExactPin = null,
   incidents = [],
   watchZones = [],
+  geofences = [],
+  showIncidents = true,
+  showHeatmap = true,
+  showRiskZones = true,
+  showGeofencing = true,
+  emphasizeRecentIncidents = true,
+  allowDirectPinDrop = false,
+  showControlsUi = true,
+  routePath = [],
+  routeStops = [],
+  trackedPosition = null,
+  followTrackedPosition = false,
   onIncidentSelect,
   onMapStyleChange,
   onStateChange,
@@ -338,7 +461,9 @@ export function DashboardMap({
   const pinpointModeRef = useRef(false);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const incidentMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const routeMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const pinMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const trackedMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const styleRef = useRef<string>(MAP_STYLES[0].value);
   const focusKeyRef = useRef<string | null>(null);
 
@@ -351,12 +476,12 @@ export function DashboardMap({
   const [statusMsg, setStatusMsg] = useState("");
 
   // Search state
-  const [cityQuery, setCityQuery] = useState(initialCity);
-  const [cityOptions, setCityOptions] = useState<SearchOption[]>([]);
-  const [selectedCity, setSelectedCity] = useState<SearchOption | null>(null);
-  const [streetQuery, setStreetQuery] = useState(initialStreet);
-  const [streetOptions, setStreetOptions] = useState<SearchOption[]>([]);
-  const [selectedStreet, setSelectedStreet] = useState<SearchOption | null>(null);
+  const [addressQuery, setAddressQuery] = useState(initialStreet || initialCity || initialState);
+  const [addressOptions, setAddressOptions] = useState<SearchOption[]>([]);
+  const [selectedAddress, setSelectedAddress] = useState<SearchOption | null>(null);
+  const [isAddressSuggestionOpen, setIsAddressSuggestionOpen] = useState(false);
+  const [isLoadingAddressOptions, setIsLoadingAddressOptions] = useState(false);
+  const addressSearchRequestRef = useRef(0);
 
   const stateData = useMemo(
     () =>
@@ -369,7 +494,9 @@ export function DashboardMap({
   const exactPin = initialExactPin;
 
   const focusCenter: [number, number] =
-    selectedStreet?.coordinates ?? selectedCity?.coordinates ?? stateData.center;
+    exactPin
+      ? [exactPin.longitude, exactPin.latitude]
+      : selectedAddress?.coordinates ?? stateData.center;
 
   // ── Keep pinpointModeRef in sync ──
   useEffect(() => {
@@ -392,29 +519,43 @@ export function DashboardMap({
     document.head.appendChild(style);
   }, []);
 
-  // ── City geocode ──
+  // ── Address geocode ──
   useEffect(() => {
-    if (!token || cityQuery.trim().length < 2) return;
-    const ac = new AbortController();
-    geocode(`${cityQuery}, ${selectedState}, Nigeria`, token, "place,locality,district")
-      .then(setCityOptions)
-      .catch(() => {});
-    return () => ac.abort();
-  }, [cityQuery, selectedState, token]);
-
-  // ── Street geocode ──
-  useEffect(() => {
-    if (!token || !selectedCity || streetQuery.trim().length < 2) return;
-    const [lng, lat] = selectedCity.coordinates;
-    geocode(
-      `${streetQuery}, ${selectedCity.label}, ${selectedState}, Nigeria`,
-      token,
-      "street,address",
-      { proximity: `${lng},${lat}` },
-    )
-      .then(setStreetOptions)
-      .catch(() => {});
-  }, [streetQuery, selectedCity, selectedState, token]);
+    const query = addressQuery.trim();
+    if (!token || query.length < 2) {
+      const resetTimer = window.setTimeout(() => {
+        setAddressOptions([]);
+        setIsLoadingAddressOptions(false);
+      }, 0);
+      return () => window.clearTimeout(resetTimer);
+    }
+    if (!isAddressSuggestionOpen) {
+      return;
+    }
+    const requestId = addressSearchRequestRef.current + 1;
+    addressSearchRequestRef.current = requestId;
+    searchLocations(addressQuery, 8)
+      .then((results) => {
+        if (addressSearchRequestRef.current !== requestId) return;
+        setAddressOptions(
+          results.map((result: LocationSearchResult) => ({
+            id: result.id,
+            label: result.label,
+            coordinates: [result.longitude, result.latitude],
+            state: result.state,
+          })),
+        );
+      })
+      .catch(() => {
+        if (addressSearchRequestRef.current !== requestId) return;
+        setAddressOptions([]);
+      })
+      .finally(() => {
+        if (addressSearchRequestRef.current === requestId) {
+          setIsLoadingAddressOptions(false);
+        }
+      });
+  }, [addressQuery, isAddressSuggestionOpen, token]);
 
   // ── Init map ──
   useEffect(() => {
@@ -455,13 +596,19 @@ export function DashboardMap({
     };
 
     const onClick = (e: mapboxgl.MapMouseEvent) => {
-      if (!pinpointModeRef.current) return;
+      if (!pinpointModeRef.current && !allowDirectPinDrop) return;
       const { lat, lng } = e.lngLat;
       const nextPin = { latitude: lat, longitude: lng, label: `Pinned • ${fmtCoords(lat, lng)}` };
-      setPinpointMode(false);
+      if (pinpointModeRef.current) {
+        setPinpointMode(false);
+      }
       onExactPinChange?.(nextPin);
       onFocusChange?.({ latitude: lat, longitude: lng });
-      setStatusMsg("Exact location captured.");
+      setStatusMsg(
+        pinpointModeRef.current
+          ? "Exact location captured."
+          : "Location pin placed. You can tap again to refine it.",
+      );
     };
 
     map.on("load", onLoad);
@@ -473,7 +620,9 @@ export function DashboardMap({
     return () => {
       markersRef.current.forEach((m) => m.remove());
       incidentMarkersRef.current.forEach((m) => m.remove());
+      routeMarkersRef.current.forEach((m) => m.remove());
       pinMarkerRef.current?.remove();
+      trackedMarkerRef.current?.remove();
       loadedRef.current = false;
       ro.disconnect();
       map.remove();
@@ -529,6 +678,106 @@ export function DashboardMap({
     });
   }, [loaded, onFocusChange, selectedIncident]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || routePath.length < 2) return;
+
+    const SRC = "gp-route-path";
+    const LINE_LAYER = "gp-route-path-line";
+    const collection: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: routePath,
+          },
+          properties: {},
+        },
+      ],
+    };
+
+    const src = map.getSource(SRC) as mapboxgl.GeoJSONSource | undefined;
+    if (src) {
+      src.setData(collection);
+    } else {
+      map.addSource(SRC, { type: "geojson", data: collection });
+      map.addLayer({
+        id: LINE_LAYER,
+        type: "line",
+        source: SRC,
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+        paint: {
+          "line-color": "#4cd7f6",
+          "line-width": 4,
+          "line-opacity": 0.95,
+          "line-dasharray": [1, 1.25],
+        },
+      });
+    }
+
+    routeMarkersRef.current.forEach((marker) => marker.remove());
+    routeMarkersRef.current = [];
+    routeStops.forEach((stop) => {
+      const popup = new mapboxgl.Popup({ offset: 14 }).setHTML(
+        `<div><strong>${stop.label}</strong><br/><span style="font-size:11px;opacity:0.65">${fmtCoords(stop.latitude, stop.longitude)}</span></div>`,
+      );
+      const marker = new mapboxgl.Marker({
+        element: makeRouteStopMarker(stop.kind),
+        anchor: "center",
+      })
+        .setLngLat([stop.longitude, stop.latitude])
+        .setPopup(popup)
+        .addTo(map);
+      routeMarkersRef.current.push(marker);
+    });
+
+    const bounds = routePath.reduce(
+      (acc, coordinate) => acc.extend(coordinate as [number, number]),
+      new mapboxgl.LngLatBounds(routePath[0], routePath[0]),
+    );
+    map.fitBounds(bounds, { padding: 72, duration: 900, maxZoom: 9 });
+
+    return () => {
+      routeMarkersRef.current.forEach((marker) => marker.remove());
+      routeMarkersRef.current = [];
+    };
+  }, [loaded, routePath, routeStops]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+
+    trackedMarkerRef.current?.remove();
+    trackedMarkerRef.current = null;
+
+    if (!trackedPosition) return;
+
+    trackedMarkerRef.current = new mapboxgl.Marker({
+      element: makeTrackedPositionMarker(),
+      anchor: "center",
+    })
+      .setLngLat([trackedPosition.longitude, trackedPosition.latitude])
+      .setPopup(
+        new mapboxgl.Popup({ offset: 16 }).setHTML(
+          `<div><strong>${trackedPosition.label ?? "Current position"}</strong><br/><span style="font-size:11px;opacity:0.6">${fmtCoords(trackedPosition.latitude, trackedPosition.longitude)}</span></div>`,
+        ),
+      )
+      .addTo(map);
+
+    if (followTrackedPosition) {
+      map.easeTo({
+        center: [trackedPosition.longitude, trackedPosition.latitude],
+        duration: 900,
+        essential: true,
+      });
+    }
+  }, [followTrackedPosition, loaded, trackedPosition]);
+
   // ── Watch zone circles (GeoJSON layer) ──
   useEffect(() => {
     const map = mapRef.current;
@@ -577,7 +826,171 @@ export function DashboardMap({
       map.on("mouseenter", LAYER, () => { map.getCanvas().style.cursor = "pointer"; });
       map.on("mouseleave", LAYER, () => { map.getCanvas().style.cursor = ""; });
     }
-  }, [loaded, watchZones]);
+    if (map.getLayer(LAYER)) {
+      map.setLayoutProperty(LAYER, "visibility", showRiskZones ? "visible" : "none");
+    }
+  }, [loaded, showRiskZones, watchZones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    const SRC = "gp-incident-heatmap-src";
+    const LAYER = "gp-incident-heatmap";
+    const collection: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: incidents.map((incident) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [incident.longitude, incident.latitude] },
+        properties: {
+          severityWeight:
+            (incident.severity === "critical"
+              ? 1
+              : incident.severity === "high"
+                ? 0.8
+                : incident.severity === "medium"
+                  ? 0.55
+                  : 0.3) *
+            getIncidentRecencyVisuals(incident, emphasizeRecentIncidents).heatmapWeight,
+        },
+      })),
+    };
+
+    const src = map.getSource(SRC) as mapboxgl.GeoJSONSource | undefined;
+    if (src) {
+      src.setData(collection);
+    } else {
+      map.addSource(SRC, { type: "geojson", data: collection });
+      map.addLayer({
+        id: LAYER,
+        type: "heatmap",
+        source: SRC,
+        maxzoom: 15,
+        paint: {
+          "heatmap-weight": ["get", "severityWeight"],
+          "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 6, 0.55, 12, 1.1],
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 6, 18, 12, 34],
+          "heatmap-opacity": 0.55,
+          "heatmap-color": [
+            "interpolate",
+            ["linear"],
+            ["heatmap-density"],
+            0,
+            "rgba(76,215,246,0)",
+            0.2,
+            "rgba(76,215,246,0.28)",
+            0.4,
+            "rgba(127,208,255,0.45)",
+            0.6,
+            "rgba(248,193,91,0.6)",
+            0.8,
+            "rgba(255,95,109,0.72)",
+            1,
+            "rgba(255,63,90,0.85)",
+          ],
+        },
+      });
+    }
+
+    if (map.getLayer(LAYER)) {
+      map.setLayoutProperty(LAYER, "visibility", showHeatmap ? "visible" : "none");
+    }
+  }, [emphasizeRecentIncidents, incidents, loaded, showHeatmap]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    const SRC = "gp-geofences";
+    const FILL_LAYER = "gp-geofence-circles";
+    const STROKE_LAYER = "gp-geofence-strokes";
+    const collection: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: geofences.map((geofence) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [geofence.longitude, geofence.latitude] },
+        properties: {
+          name: geofence.name,
+          type: geofence.geofenceType,
+          status: geofence.status,
+          description: geofence.description,
+          radiusMeters: geofence.radiusMeters,
+          color: geofenceColor(geofence.geofenceType),
+        },
+      })),
+    };
+
+    const src = map.getSource(SRC) as mapboxgl.GeoJSONSource | undefined;
+    if (src) {
+      src.setData(collection);
+    } else {
+      map.addSource(SRC, { type: "geojson", data: collection });
+      map.addLayer({
+        id: FILL_LAYER,
+        type: "circle",
+        source: SRC,
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,
+            ["max", 12, ["/", ["get", "radiusMeters"], 450]],
+            12,
+            ["max", 26, ["/", ["get", "radiusMeters"], 180]],
+          ],
+          "circle-color": ["get", "color"],
+          "circle-opacity": 0.08,
+          "circle-stroke-width": 0,
+        },
+      });
+      map.addLayer({
+        id: STROKE_LAYER,
+        type: "circle",
+        source: SRC,
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,
+            ["max", 12, ["/", ["get", "radiusMeters"], 450]],
+            12,
+            ["max", 26, ["/", ["get", "radiusMeters"], 180]],
+          ],
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-color": ["get", "color"],
+          "circle-stroke-opacity": 0.55,
+          "circle-stroke-width": 1.5,
+        },
+      });
+      map.on("click", FILL_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== "Point") return;
+        new mapboxgl.Popup({ offset: 20, maxWidth: "240px" })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(
+            `<div>
+              <strong style="display:block;margin-bottom:4px">${f.properties?.name}</strong>
+              <span style="display:block;font-size:11px;opacity:0.78">${String(f.properties?.type ?? "custom").replace(/_/g, " ").toUpperCase()} GEOFENCE</span>
+              <span style="display:block;font-size:11px;opacity:0.65;margin-top:4px">Radius ${Math.round(Number(f.properties?.radiusMeters ?? 0))}m</span>
+              ${
+                f.properties?.description
+                  ? `<span style="display:block;font-size:11px;opacity:0.65;margin-top:6px">${f.properties.description}</span>`
+                  : ""
+              }
+            </div>`,
+          )
+          .addTo(map);
+      });
+      map.on("mouseenter", FILL_LAYER, () => { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", FILL_LAYER, () => { map.getCanvas().style.cursor = ""; });
+    }
+
+    for (const layerId of [FILL_LAYER, STROKE_LAYER]) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", showGeofencing ? "visible" : "none");
+      }
+    }
+  }, [geofences, loaded, showGeofencing]);
 
   // ── Incident markers ──
   useEffect(() => {
@@ -586,13 +999,37 @@ export function DashboardMap({
     incidentMarkersRef.current.forEach((m) => m.remove());
     incidentMarkersRef.current = [];
 
+    if (!showIncidents) {
+      return () => {
+        incidentMarkersRef.current.forEach((m) => m.remove());
+        incidentMarkersRef.current = [];
+      };
+    }
+
     incidents.forEach((inc) => {
-      const el = makeIncidentDot(incidentColor(inc.incidentType, inc.severity), isFresh(inc));
+      const visuals = getIncidentRecencyVisuals(inc, emphasizeRecentIncidents);
+      const el = makeIncidentDot(
+        incidentColor(inc.incidentType, inc.severity),
+        emphasizeRecentIncidents && isFresh(inc),
+        visuals,
+      );
+      const popup = new mapboxgl.Popup({
+        offset: 14,
+        closeButton: false,
+        closeOnClick: true,
+        maxWidth: "220px",
+      }).setHTML(
+        `<div style="font-size:12px;line-height:1.35;padding:2px 0">
+          <strong style="display:block;color:#ffffff">${escapeHtml(inc.title)}</strong>
+        </div>`,
+      );
       const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
         .setLngLat([inc.longitude, inc.latitude])
+        .setPopup(popup)
         .addTo(map);
       el.addEventListener("click", (e) => {
         e.stopPropagation();
+        marker.togglePopup();
         onIncidentSelect?.(inc);
         map.flyTo({ center: [inc.longitude, inc.latitude], zoom: Math.max(map.getZoom(), 12), speed: 0.8 });
       });
@@ -603,34 +1040,27 @@ export function DashboardMap({
       incidentMarkersRef.current.forEach((m) => m.remove());
       incidentMarkersRef.current = [];
     };
-  }, [loaded, incidents, onIncidentSelect]);
+  }, [emphasizeRecentIncidents, loaded, incidents, onIncidentSelect, showIncidents]);
 
-  // ── Location markers (state / city / street) ──
+  // ── Location markers (state / selected address) ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
-    const sm = new mapboxgl.Marker({ element: makeCircle("#4cd7f6", !selectedCity ? 22 : 16, !selectedCity), anchor: "center" })
+    const sm = new mapboxgl.Marker({ element: makeCircle("#4cd7f6", !selectedAddress ? 22 : 16, !selectedAddress), anchor: "center" })
       .setLngLat(stateData.center)
       .addTo(map);
     markersRef.current.push(sm);
 
-    if (selectedCity) {
-      const cm = new mapboxgl.Marker({ element: makeCircle("#4edea3", !selectedStreet ? 22 : 16, !selectedStreet), anchor: "center" })
-        .setLngLat(selectedCity.coordinates)
-        .addTo(map);
-      markersRef.current.push(cm);
-    }
-
-    if (selectedStreet) {
+    if (selectedAddress) {
       const rm = new mapboxgl.Marker({ element: makeCircle("#ff817a", 22, true), anchor: "center" })
-        .setLngLat(selectedStreet.coordinates)
+        .setLngLat(selectedAddress.coordinates)
         .addTo(map);
       markersRef.current.push(rm);
     }
-  }, [loaded, stateData, selectedCity, selectedStreet]);
+  }, [loaded, selectedAddress, stateData]);
 
   // ── Pinpoint marker ──
   useEffect(() => {
@@ -660,41 +1090,21 @@ export function DashboardMap({
     navigator.geolocation.getCurrentPosition(
       async ({ coords: { latitude, longitude } }) => {
         try {
-          const url = new URL("https://api.mapbox.com/search/geocode/v6/reverse");
-          url.searchParams.set("longitude", String(longitude));
-          url.searchParams.set("latitude", String(latitude));
-          url.searchParams.set("country", "NG");
-          url.searchParams.set("access_token", token);
-          const res = await fetch(url.toString());
-          const data = await res.json();
-          const f: GeoFeature = data.features?.[0];
-          const regionName = f?.properties?.context?.region?.name ?? "";
-          const cityName =
-            f?.properties?.context?.place?.name ??
-            f?.properties?.context?.locality?.name ??
-            "My Location";
-          const streetName = f?.properties?.context?.street?.name ?? f?.properties?.name ?? "Current Street";
-
-          const matched =
-            NIGERIA_STATES.find((s) =>
-              regionName.toLowerCase().includes(s.state.toLowerCase()),
-            ) ??
-            (regionName.toLowerCase().includes("federal capital")
-              ? NIGERIA_STATES.find((s) => s.state === "FCT Abuja")
-              : undefined) ??
-            NIGERIA_STATES[0];
-
-          setSelectedState(matched.state);
-          const cityOpt: SearchOption = { id: "geo-city", label: cityName, coordinates: [longitude, latitude] };
-          const streetOpt: SearchOption = { id: "geo-street", label: streetName, coordinates: [longitude, latitude] };
-          setSelectedCity(cityOpt);
-          setCityQuery(cityName);
-          setSelectedStreet(streetOpt);
-          setStreetQuery(streetName);
-          const nextPin = { latitude, longitude, label: `${streetName}, ${cityName}` };
-          onStateChange?.(matched.state);
-          onCityChange?.(cityName);
-          onStreetChange?.(streetName);
+          const reverse = await reverseGeocodeLocation(latitude, longitude);
+          setSelectedState(reverse.state);
+          const addressOpt: SearchOption = {
+            id: "geo-address",
+            label: reverse.label,
+            coordinates: [longitude, latitude],
+            state: reverse.state,
+          };
+          setSelectedAddress(addressOpt);
+          setAddressQuery(reverse.label);
+          setIsAddressSuggestionOpen(false);
+          const nextPin = { latitude, longitude, label: reverse.label };
+          onStateChange?.(reverse.state);
+          onCityChange?.(reverse.label);
+          onStreetChange?.(reverse.label);
           onExactPinChange?.(nextPin);
           onFocusChange?.({ latitude, longitude });
           setStatusMsg("Centered on your location.");
@@ -710,11 +1120,6 @@ export function DashboardMap({
   }
 
   // ── Handlers ──
-  function syncState(nextState: string) {
-    setSelectedState(nextState);
-    onStateChange?.(nextState);
-  }
-
   function syncMapStyle(nextStyle: string) {
     onMapStyleChange?.(nextStyle);
   }
@@ -731,23 +1136,27 @@ export function DashboardMap({
     onZoomChange?.(nextZoom);
   }
 
-  function pickCity(opt: SearchOption) {
-    setSelectedCity(opt);
-    setCityQuery(opt.label);
-    setSelectedStreet(null);
-    setStreetQuery("");
-    setStreetOptions([]);
-    const nextPin = { latitude: opt.coordinates[1], longitude: opt.coordinates[0], label: opt.label };
-    onCityChange?.(opt.label);
-    onStreetChange?.("");
-    onExactPinChange?.(nextPin);
-    onFocusChange?.({ latitude: nextPin.latitude, longitude: nextPin.longitude });
+  function syncAddressQuery(nextQuery: string) {
+    setAddressQuery(nextQuery);
+    const trimmed = nextQuery.trim();
+    if (trimmed.length < 2 || !token) {
+      setAddressOptions([]);
+      setIsLoadingAddressOptions(false);
+      return;
+    }
+    setIsLoadingAddressOptions(true);
   }
 
-  function pickStreet(opt: SearchOption) {
-    setSelectedStreet(opt);
-    setStreetQuery(opt.label);
+  function pickAddress(opt: SearchOption) {
+    setSelectedAddress(opt);
+    setAddressQuery(opt.label);
+    setIsAddressSuggestionOpen(false);
+    if (opt.state) {
+      setSelectedState(opt.state);
+      onStateChange?.(opt.state);
+    }
     const nextPin = { latitude: opt.coordinates[1], longitude: opt.coordinates[0], label: opt.label };
+    onCityChange?.(opt.label);
     onStreetChange?.(opt.label);
     onExactPinChange?.(nextPin);
     onFocusChange?.({ latitude: nextPin.latitude, longitude: nextPin.longitude });
@@ -777,30 +1186,20 @@ export function DashboardMap({
   const controlsContent = (
     <ControlsContent
       mapStyle={mapStyle}
-      selectedState={selectedState}
       zoomLevel={zoomLevel}
-      cityQuery={cityQuery}
-      cityOptions={cityOptions}
-      streetQuery={streetQuery}
-      streetOptions={streetOptions}
+      addressQuery={addressQuery}
+      addressOptions={addressOptions}
+      isAddressSuggestionOpen={isAddressSuggestionOpen}
+      isLoadingAddressOptions={isLoadingAddressOptions}
       exactPin={exactPin}
       pinpointMode={pinpointMode}
       isLocating={isLocating}
       statusMsg={statusMsg}
       onMapStyleChange={syncMapStyle}
-      onStateChange={(s) => {
-        syncState(s);
-        setSelectedCity(null);
-        setCityQuery("");
-        setSelectedStreet(null);
-        setStreetQuery("");
-        onExactPinChange?.(null);
-      }}
       onZoomChange={syncZoom}
-      onCityQueryChange={setCityQuery}
-      onPickCity={pickCity}
-      onStreetQueryChange={setStreetQuery}
-      onPickStreet={pickStreet}
+      onAddressQueryChange={syncAddressQuery}
+      onAddressSuggestionOpenChange={setIsAddressSuggestionOpen}
+      onPickAddress={pickAddress}
       onLocate={locateMe}
       onTogglePinpoint={togglePinpoint}
       onClearPin={clearPin}
@@ -819,7 +1218,8 @@ export function DashboardMap({
       filterPanel={filterPanel}
     />
   );
-  const portalControls = controlsTargetElement ? createPortal(controlsContent, controlsTargetElement) : null;
+  const portalControls =
+    showControlsUi && controlsTargetElement ? createPortal(controlsContent, controlsTargetElement) : null;
 
   return (
     <div className="relative w-full h-full min-h-screen bg-[#090e1c] overflow-hidden">
@@ -846,6 +1246,7 @@ export function DashboardMap({
       )}
 
       {/* ── Top bar (always visible) ── */}
+      {showControlsUi ? (
       <div className="absolute top-0 left-0 right-0 z-20 px-4 pt-safe-top pt-3 flex items-center gap-2 pointer-events-none">
         {/* Logo chip */}
         <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-[rgba(76,215,246,0.3)] bg-[rgba(9,14,28,0.85)] px-4 py-2 backdrop-blur-md shadow-lg">
@@ -883,9 +1284,10 @@ export function DashboardMap({
           <MenuIcon />
         </button>
       </div>
+      ) : null}
 
       {/* ── Exact pin banner ── */}
-      {exactPin && (
+      {showControlsUi && exactPin && (
         <div className="absolute left-1/2 top-20 z-20 -translate-x-1/2 pointer-events-auto">
           <div className="flex items-center gap-2 rounded-full border border-[rgba(255,129,122,0.35)] bg-[rgba(9,14,28,0.9)] px-4 py-2 backdrop-blur-md shadow-lg">
             <span className="h-2 w-2 rounded-full bg-[#ff817a] shadow-[0_0_6px_#ff817a]" />
@@ -900,7 +1302,7 @@ export function DashboardMap({
       )}
 
       {/* ── Pinpoint mode overlay ── */}
-      {pinpointMode && (
+      {showControlsUi && pinpointMode && (
         <div className="absolute inset-0 z-10 pointer-events-none" style={{ cursor: "crosshair" }}>
           <div className="absolute left-1/2 bottom-48 md:bottom-8 -translate-x-1/2 pointer-events-auto">
             <div className="flex items-center gap-2 rounded-full border border-[rgba(78,222,163,0.4)] bg-[rgba(9,14,28,0.92)] px-5 py-3 backdrop-blur-md animate-pulse">
@@ -917,6 +1319,7 @@ export function DashboardMap({
       {/* Desktop fallback removed — controls render via portal (`controlsTargetId`) or mobile bottom sheet only. */}
 
       {/* ── Mobile bottom sheet ── */}
+      {showControlsUi ? (
       <div
         className={`md:hidden absolute inset-x-0 bottom-0 z-30 transition-transform duration-300 ease-out ${
           panelOpen ? "translate-y-0" : "translate-y-[calc(100%-72px)]"
@@ -953,8 +1356,10 @@ export function DashboardMap({
           {controlsContent}
         </div>
       </div>
+      ) : null}
 
       {/* ── Zoom buttons (mobile) ── */}
+      {showControlsUi ? (
       <div className="md:hidden absolute right-4 bottom-24 z-20 flex flex-col gap-2">
         <button
           type="button"
@@ -993,6 +1398,7 @@ export function DashboardMap({
           <PinIcon />
         </button>
       </div>
+      ) : null}
     </div>
   );
 }
@@ -1001,23 +1407,20 @@ export function DashboardMap({
 
 type ControlsProps = {
   mapStyle: string;
-  selectedState: string;
   zoomLevel: number;
-  cityQuery: string;
-  cityOptions: SearchOption[];
-  streetQuery: string;
-  streetOptions: SearchOption[];
+  addressQuery: string;
+  addressOptions: SearchOption[];
+  isAddressSuggestionOpen: boolean;
+  isLoadingAddressOptions: boolean;
   exactPin: ExactPin | null;
   pinpointMode: boolean;
   isLocating: boolean;
   statusMsg: string;
   onMapStyleChange: (v: string) => void;
-  onStateChange: (v: string) => void;
   onZoomChange: (v: number) => void;
-  onCityQueryChange: (v: string) => void;
-  onPickCity: (opt: SearchOption) => void;
-  onStreetQueryChange: (v: string) => void;
-  onPickStreet: (opt: SearchOption) => void;
+  onAddressQueryChange: (v: string) => void;
+  onAddressSuggestionOpenChange: (value: boolean) => void;
+  onPickAddress: (opt: SearchOption) => void;
   onLocate: () => void;
   onTogglePinpoint: () => void;
   onClearPin: () => void;
@@ -1032,23 +1435,20 @@ type ControlsProps = {
 
 function ControlsContent({
   mapStyle,
-  selectedState,
   zoomLevel,
-  cityQuery,
-  cityOptions,
-  streetQuery,
-  streetOptions,
+  addressQuery,
+  addressOptions,
+  isAddressSuggestionOpen,
+  isLoadingAddressOptions,
   exactPin,
   pinpointMode,
   isLocating,
   statusMsg,
   onMapStyleChange,
-  onStateChange,
   onZoomChange,
-  onCityQueryChange,
-  onPickCity,
-  onStreetQueryChange,
-  onPickStreet,
+  onAddressQueryChange,
+  onAddressSuggestionOpenChange,
+  onPickAddress,
   onLocate,
   onTogglePinpoint,
   onClearPin,
@@ -1201,6 +1601,7 @@ function ControlsContent({
               <select
                 value={mapStyle}
                 onChange={(e) => onMapStyleChange(e.target.value)}
+                onFocus={() => onAddressSuggestionOpenChange(true)}
                 className={inputCls}
               >
                 {MAP_STYLES.map((s) => (
@@ -1212,64 +1613,55 @@ function ControlsContent({
             </label>
           </div>
 
-          {/* State */}
+          {/* Address */}
           <div className={sectionCls}>
             <label>
-              <span className={labelCls}>State</span>
-              <select
-                value={selectedState}
-                onChange={(e) => onStateChange(e.target.value)}
-                className={inputCls}
+              <span className={labelCls}>Address</span>
+              <div
+                className="relative"
+                onBlur={() => {
+                  window.setTimeout(() => onAddressSuggestionOpenChange(false), 120);
+                }}
               >
-                {NIGERIA_STATES.map((s) => (
-                  <option key={s.state} value={s.state} className="bg-[#0d1426]">
-                    {s.state}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {/* City */}
-          <div className={sectionCls}>
-            <label>
-              <span className={labelCls}>City</span>
               <input
-                list="gp-city-list"
-                value={cityQuery}
+                value={addressQuery}
                 onChange={(e) => {
-                  onCityQueryChange(e.target.value);
-                  const found = cityOptions.find((o) => o.label === e.target.value);
-                  if (found) onPickCity(found);
+                  onAddressQueryChange(e.target.value);
+                  onAddressSuggestionOpenChange(true);
                 }}
-                placeholder="Search city…"
+                placeholder="Search address, street, city, or place…"
                 className={inputCls}
               />
-              <datalist id="gp-city-list">
-                {cityOptions.map((o) => <option key={o.id} value={o.label} />)}
+              <datalist id="gp-address-list">
+                {addressOptions.map((o) => <option key={o.id} value={o.label} />)}
               </datalist>
+              {isAddressSuggestionOpen && (isLoadingAddressOptions || addressOptions.length > 0) ? (
+                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#08101f] shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
+                  {isLoadingAddressOptions ? (
+                    <div className="px-3 py-3 text-xs text-white/45">Finding locations...</div>
+                  ) : (
+                    addressOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => onPickAddress(option)}
+                        className="flex w-full flex-col items-start gap-1 border-b border-white/[0.06] px-3 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04]"
+                      >
+                        <span className="text-sm font-medium text-white">{option.label}</span>
+                        <span className="text-xs text-white/40">
+                          {option.state ? `${option.state} • Suggested location` : "Suggested location"}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+              </div>
             </label>
-          </div>
-
-          {/* Street */}
-          <div className={sectionCls}>
-            <label>
-              <span className={labelCls}>Street</span>
-              <input
-                list="gp-street-list"
-                value={streetQuery}
-                onChange={(e) => {
-                  onStreetQueryChange(e.target.value);
-                  const found = streetOptions.find((o) => o.label === e.target.value);
-                  if (found) onPickStreet(found);
-                }}
-                placeholder="Search street…"
-                className={inputCls}
-              />
-              <datalist id="gp-street-list">
-                {streetOptions.map((o) => <option key={o.id} value={o.label} />)}
-              </datalist>
-            </label>
+            <p className="text-xs leading-5 text-[rgba(188,201,205,0.5)]">
+              Typing one place is enough. The map will resolve and center it automatically.
+            </p>
           </div>
 
           {/* Zoom slider */}

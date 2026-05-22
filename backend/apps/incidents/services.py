@@ -241,11 +241,26 @@ def process_signal_intelligence(signal: Signal) -> dict:
 
 def _map_signal_category_to_incident_type(category: str) -> str:
     mapping = {
-        "violence": IncidentType.VIOLENCE,
+        "suspicious_activity": IncidentType.SUSPICIOUS_ACTIVITY,
+        "road_accident": IncidentType.ROAD_ACCIDENT,
         "kidnapping": IncidentType.KIDNAPPING,
         "armed_robbery": IncidentType.ARMED_ROBBERY,
-        "road_threat": IncidentType.ROAD_BLOCKADE,
-        "fire_smoke": IncidentType.FIRE,
-        "flood": IncidentType.FLOOD,
+        "fire_outbreak": IncidentType.FIRE_OUTBREAK,
+        "road_obstruction": IncidentType.ROAD_OBSTRUCTION,
+        "flooding": IncidentType.FLOODING,
+        "medical_emergency": IncidentType.MEDICAL_EMERGENCY,
+        "gunshots_heard": IncidentType.GUNSHOTS_HEARD,
+        "unsafe_route": IncidentType.UNSAFE_ROUTE,
+        "suspicious_movement": IncidentType.SUSPICIOUS_ACTIVITY,
+        "abnormal_sighting": IncidentType.SUSPICIOUS_ACTIVITY,
+        "camp_indicator": IncidentType.SUSPICIOUS_ACTIVITY,
+        "tip": IncidentType.SUSPICIOUS_ACTIVITY,
+        "other": IncidentType.SUSPICIOUS_ACTIVITY,
+        "violence": IncidentType.GUNSHOTS_HEARD,
+        "road_threat": IncidentType.UNSAFE_ROUTE,
+        "road_blockade": IncidentType.ROAD_OBSTRUCTION,
+        "fire_smoke": IncidentType.FIRE_OUTBREAK,
+        "fire": IncidentType.FIRE_OUTBREAK,
+        "flood": IncidentType.FLOODING,
     }
-    return mapping.get(category, IncidentType.THREAT_ACTIVITY)
+    return mapping.get(category, IncidentType.SUSPICIOUS_ACTIVITY)
