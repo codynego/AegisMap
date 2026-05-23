@@ -2,7 +2,7 @@ from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from .models import UserRole
 
-PUBLIC_ROLES = {UserRole.COMMUNITY_REPORTER, UserRole.TRUSTED_VERIFIER}
+PUBLIC_ROLES = {UserRole.REGULAR_USER, UserRole.COMMUNITY_REPORTER, UserRole.TRUSTED_VERIFIER}
 INTERNAL_ROLES = {UserRole.ANALYST, UserRole.ADMIN}
 
 
@@ -26,7 +26,7 @@ def is_trusted_reporter(user) -> bool:
 
 
 def is_public_contributor(user) -> bool:
-    return get_user_role(user) in {UserRole.COMMUNITY_REPORTER, UserRole.TRUSTED_VERIFIER}
+    return get_user_role(user) in PUBLIC_ROLES
 
 
 def can_view_public_reports(user) -> bool:

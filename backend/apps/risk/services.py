@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from apps.alerts.models import Alert
 from apps.signals.models import Signal, SignalStatus
+from config.geo import alert_location_payload, resolve_nigeria_state
 
 from .models import RiskLevel, RiskSnapshot, WatchZone
 
@@ -76,6 +77,7 @@ def evaluate_watch_zone(watch_zone: WatchZone) -> WatchZone:
         factors={"matched_signal_count": len(recent_signals)},
     )
     if level != previous_level and level != RiskLevel.BASELINE:
+        location = resolve_nigeria_state(watch_zone.centroid_latitude, watch_zone.centroid_longitude)
         Alert.objects.create(
             watch_zone=watch_zone,
             severity=_risk_level_to_alert_severity(level),
@@ -88,6 +90,12 @@ def evaluate_watch_zone(watch_zone: WatchZone) -> WatchZone:
                 "previous_level": previous_level,
                 "new_level": level,
                 "risk_score": float(watch_zone.current_risk_score),
+                **alert_location_payload(
+                    label=watch_zone.name,
+                    latitude=location["latitude"],
+                    longitude=location["longitude"],
+                    state=location["state"],
+                ),
             },
         )
     return watch_zone

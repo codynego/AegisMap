@@ -5,6 +5,14 @@ from apps.users.permissions import is_analyst_or_admin
 from .models import Alert, AlertRule
 
 
+def _metadata_value(instance, key, fallback=None):
+    if isinstance(getattr(instance, "metadata", None), dict):
+        value = instance.metadata.get(key)
+        if value not in {None, ""}:
+            return value
+    return fallback
+
+
 class AlertRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = AlertRule
@@ -26,6 +34,11 @@ class AlertRuleSerializer(serializers.ModelSerializer):
 
 
 class AlertSerializer(serializers.ModelSerializer):
+    location_name = serializers.SerializerMethodField()
+    location_state = serializers.SerializerMethodField()
+    location_latitude = serializers.SerializerMethodField()
+    location_longitude = serializers.SerializerMethodField()
+
     class Meta:
         model = Alert
         fields = [
@@ -41,11 +54,46 @@ class AlertSerializer(serializers.ModelSerializer):
             "title",
             "message",
             "metadata",
+            "location_name",
+            "location_state",
+            "location_latitude",
+            "location_longitude",
             "triggered_at",
             "acknowledged_at",
             "resolved_at",
         ]
         read_only_fields = ["id", "triggered_at"]
+
+    def get_location_name(self, instance):
+        return _metadata_value(
+            instance,
+            "location_name",
+            getattr(instance.watch_zone, "name", None)
+            or getattr(instance.geofence, "name", None)
+            or getattr(instance.incident, "location_name", None)
+            or getattr(instance.cluster, "name", None),
+        )
+
+    def get_location_state(self, instance):
+        return _metadata_value(instance, "location_state", "")
+
+    def get_location_latitude(self, instance):
+        return _metadata_value(
+            instance,
+            "location_latitude",
+            getattr(instance.watch_zone, "centroid_latitude", None)
+            or getattr(instance.geofence, "centroid_latitude", None)
+            or getattr(instance.incident, "latitude", None),
+        )
+
+    def get_location_longitude(self, instance):
+        return _metadata_value(
+            instance,
+            "location_longitude",
+            getattr(instance.watch_zone, "centroid_longitude", None)
+            or getattr(instance.geofence, "centroid_longitude", None)
+            or getattr(instance.incident, "longitude", None),
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -60,6 +108,10 @@ class AlertSerializer(serializers.ModelSerializer):
             "status",
             "title",
             "message",
+            "location_name",
+            "location_state",
+            "location_latitude",
+            "location_longitude",
             "triggered_at",
             "acknowledged_at",
             "resolved_at",

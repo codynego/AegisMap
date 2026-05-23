@@ -3,6 +3,7 @@ from django.db import models
 
 
 class UserRole(models.TextChoices):
+    REGULAR_USER = "regular_user", "Regular User"
     COMMUNITY_REPORTER = "community_reporter", "Community Reporter"
     TRUSTED_VERIFIER = "trusted_verifier", "Trusted Verifier"
     ANALYST = "analyst", "Analyst"
@@ -39,7 +40,7 @@ class UserProfile(models.Model):
     role = models.CharField(
         max_length=32,
         choices=UserRole.choices,
-        default=UserRole.COMMUNITY_REPORTER,
+        default=UserRole.REGULAR_USER,
     )
     organization = models.CharField(max_length=255, blank=True)
     phone_number = models.CharField(max_length=32, blank=True)

@@ -1,13 +1,16 @@
 from rest_framework import serializers
 
 from .models import MediaAsset, PatrolUpload
+from apps.incidents.models import Incident
 
 
 class PatrolUploadSerializer(serializers.ModelSerializer):
+    incident = serializers.PrimaryKeyRelatedField(queryset=Incident.objects.all(), allow_null=True, required=False)
     class Meta:
         model = PatrolUpload
         fields = [
             "id",
+            "incident",
             "title",
             "uploaded_by",
             "source_profile",

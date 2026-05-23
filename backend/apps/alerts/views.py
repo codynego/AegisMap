@@ -1,4 +1,5 @@
 from django.utils import timezone
+from django.db.models import Q
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -27,11 +28,20 @@ class AlertViewSet(viewsets.ModelViewSet):
         queryset = self.queryset
         status_value = self.request.query_params.get("status")
         severity = self.request.query_params.get("severity")
+        state = (self.request.query_params.get("state") or "").strip()
 
         if status_value:
             queryset = queryset.filter(status=status_value)
         if severity:
             queryset = queryset.filter(severity=severity)
+
+        if state:
+            queryset = queryset.filter(
+                Q(metadata__location_state__iexact=state)
+                | Q(watch_zone__metadata__location_state__iexact=state)
+                | Q(geofence__metadata__location_state__iexact=state)
+                | Q(incident__metadata__location_state__iexact=state)
+            )
 
         if not is_analyst_or_admin(self.request.user):
             queryset = queryset.exclude(status="dismissed")

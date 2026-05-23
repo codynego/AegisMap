@@ -13,7 +13,16 @@ from apps.signals.views import (
     SignalIngestionJobViewSet,
     SignalViewSet,
 )
-from apps.users.views import CurrentUserView, LoginView, LogoutView, RegisterView, SourceProfileViewSet, UserProfileViewSet, UserViewSet
+from apps.users.views import (
+    ApplyCommunityReporterView,
+    CurrentUserView,
+    LoginView,
+    LogoutView,
+    RegisterView,
+    SourceProfileViewSet,
+    UserProfileViewSet,
+    UserViewSet,
+)
 from config.docs import ApiDocsSummaryView, schema_view
 from config.operational import DashboardSummaryView, HealthCheckView
 
@@ -47,5 +56,10 @@ urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="auth-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("auth/me/", CurrentUserView.as_view(), name="auth-me"),
+    path(
+        "auth/apply-community-reporter/",
+        ApplyCommunityReporterView.as_view(),
+        name="auth-apply-community-reporter",
+    ),
     *router.urls,
 ]

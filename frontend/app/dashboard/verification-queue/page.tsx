@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole, getDefaultRouteForRole, isTrustedReporterRole } from "@/lib/access";
+import {
+  getStoredUserLocation,
+  haversineKm,
+  requestAndStoreUserLocation,
+  stateForCoordinates,
+} from "@/lib/user-location";
 
 type SignalRecord = {
   id: string;
@@ -47,6 +53,13 @@ export default function VerificationQueuePage() {
   const [signals, setSignals] = useState<SignalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [locationDenied, setLocationDenied] = useState(() =>
+    typeof window === "undefined" ? false : !navigator.geolocation,
+  );
+  const [position, setPosition] = useState<{ latitude: number; longitude: number } | null>(() => {
+    const stored = getStoredUserLocation();
+    return stored ? { latitude: stored.latitude, longitude: stored.longitude } : null;
+  });
   const role = getCurrentRole();
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : window.localStorage.getItem("geopulse.token"),
@@ -64,6 +77,25 @@ export default function VerificationQueuePage() {
       return;
     }
   }, [mounted, role]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let active = true;
+    void requestAndStoreUserLocation({ timeoutMs: 10000, enableHighAccuracy: true }).then((next) => {
+      if (!active) return;
+      if (!next) {
+        setLocationDenied(true);
+        return;
+      }
+      setPosition({ latitude: next.latitude, longitude: next.longitude });
+      setLocationDenied(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!authToken || !isTrustedReporterRole(role)) return;
@@ -111,6 +143,35 @@ export default function VerificationQueuePage() {
     [authToken],
   );
 
+  const handleTurnOnLocation = useCallback(async () => {
+    const next = await requestAndStoreUserLocation({ timeoutMs: 10000, enableHighAccuracy: true });
+    if (!next) {
+      setLocationDenied(true);
+      return;
+    }
+
+    setPosition({ latitude: next.latitude, longitude: next.longitude });
+    setLocationDenied(false);
+  }, []);
+
+  const filteredSignals = useMemo(() => {
+    if (!position) return [];
+    const targetState = stateForCoordinates(position.latitude, position.longitude);
+
+    return signals
+      .flatMap((signal) => {
+        const latitude = typeof signal.latitude === "number" ? signal.latitude : Number(signal.latitude);
+        const longitude = typeof signal.longitude === "number" ? signal.longitude : Number(signal.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+        if (stateForCoordinates(latitude, longitude) !== targetState) return [];
+
+        const distanceKm = haversineKm(position.latitude, position.longitude, latitude, longitude);
+        if (distanceKm > 120) return [];
+        return [{ ...signal, distanceKm }];
+      })
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+  }, [position, signals]);
+
   if (!mounted || !isTrustedReporterRole(role)) return null;
 
   return (
@@ -128,7 +189,7 @@ export default function VerificationQueuePage() {
           window.location.assign("/login");
         }}
         role={role}
-        subtitle="Trusted Reporter Network"
+        subtitle="Community Reporter Network"
       />
 
       <div className="lg:ml-64">
@@ -150,7 +211,7 @@ export default function VerificationQueuePage() {
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
             <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest text-emerald-300">
-              Trusted
+              Community
             </span>
           </div>
         </header>
@@ -161,7 +222,7 @@ export default function VerificationQueuePage() {
               <p className="text-[10px] uppercase tracking-widest text-emerald-300">Verification queue</p>
               <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Help confirm nearby community reports</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-                Trusted reporters help strengthen weighted consensus. Your confirmations carry more influence than a standard public vote,
+                Community reporters help strengthen weighted consensus. Your confirmations carry more influence than a standard public vote,
                 but they still do not replace analyst review for sensitive incidents.
               </p>
             </div>
@@ -172,14 +233,30 @@ export default function VerificationQueuePage() {
               </div>
             ) : null}
 
-            {!loading && signals.length === 0 ? (
+            {!loading && !position ? (
+              <div className="rounded-2xl border border-dashed border-white/[0.08] bg-[#0A1020]/80 p-5 text-sm text-white/35">
+                <p>
+                  Enable location access to view reports around you.
+                  {locationDenied ? " Location access is currently denied." : ""}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleTurnOnLocation()}
+                  className="mt-3 rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-cyan-200 transition hover:bg-cyan-400/20"
+                >
+                  Turn on location access
+                </button>
+              </div>
+            ) : null}
+
+            {!loading && position && filteredSignals.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/[0.08] bg-[#0A1020]/80 p-5 text-sm text-white/35">
                 No nearby unconfirmed reports are waiting in your queue right now.
               </div>
             ) : null}
 
             <div className="space-y-4">
-              {signals.map((signal) => (
+              {filteredSignals.map((signal) => (
                 <article key={signal.id} className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -191,7 +268,9 @@ export default function VerificationQueuePage() {
                     <span className="text-xs text-white/40">{relativeTime(signal.created_at)}</span>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-white/75">{signal.description}</p>
-                  <p className="mt-2 text-xs text-white/45">{signal.location_name || "Mapped location pending label"}</p>
+                  <p className="mt-2 text-xs text-white/45">
+                    {signal.location_name || "Mapped location pending label"} · {signal.distanceKm.toFixed(1)}km away
+                  </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       type="button"

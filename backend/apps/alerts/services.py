@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from apps.geofences.models import Geofence
 from apps.signals.models import Signal
+from config.geo import alert_location_payload, resolve_nigeria_state
 
 from .models import Alert, AlertRule
 
@@ -42,6 +43,7 @@ def generate_geofence_alerts(signal: Signal) -> list[Alert]:
         if not geofence.notify_on_signal:
             continue
         if _signal_matches_geofence(signal, geofence):
+            location = resolve_nigeria_state(geofence.centroid_latitude, geofence.centroid_longitude)
             title = f"Signal near {geofence.name}"
             if _alert_exists(title=title, geofence=geofence, signal=signal, minutes=180):
                 continue
@@ -58,6 +60,12 @@ def generate_geofence_alerts(signal: Signal) -> list[Alert]:
                         "signal_id": str(signal.pk),
                         "signal_confidence": signal.confidence,
                         "signal_category": signal.category,
+                        **alert_location_payload(
+                            label=geofence.name,
+                            latitude=location["latitude"],
+                            longitude=location["longitude"],
+                            state=location["state"],
+                        ),
                     },
                 )
             )
@@ -92,6 +100,12 @@ def generate_rule_based_alerts(signal: Signal) -> list[Alert]:
                     "signal_id": str(signal.pk),
                     "matching_signal_count": nearby_count,
                     "signal_category": signal.category,
+                    **alert_location_payload(
+                        label=signal.location_name,
+                        latitude=signal.latitude,
+                        longitude=signal.longitude,
+                        state=resolve_nigeria_state(signal.latitude, signal.longitude)["state"],
+                    ),
                 },
             )
         )

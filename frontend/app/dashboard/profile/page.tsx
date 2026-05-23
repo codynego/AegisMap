@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole, type AppRole } from "@/lib/access";
+import { getStoredUserLocation, requestAndStoreUserLocation, type UserLocation } from "@/lib/user-location";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,29 +13,11 @@ type UserProfile = {
   name: string;
   email: string;
   phone?: string;
+  role: AppRole;
+  is_active_operator: boolean;
   is_verified: boolean;
   date_joined: string;
   profile_picture?: string;
-};
-
-type CurrentUserResponse = {
-  id: number;
-  username: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  profile?: {
-    id: number;
-    display_name: string;
-    role: string;
-    organization: string;
-    phone_number: string;
-    region_name: string;
-    is_active_operator: boolean;
-    metadata: UnknownRecord;
-    created_at: string;
-    updated_at: string;
-  };
 };
 
 type ReportHistoryItem = {
@@ -156,6 +139,19 @@ function pickBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function parseAppRole(value: unknown): AppRole {
+  if (
+    value === "regular_user" ||
+    value === "community_reporter" ||
+    value === "trusted_verifier" ||
+    value === "analyst" ||
+    value === "admin"
+  ) {
+    return value;
+  }
+  return "regular_user";
+}
+
 function parseCurrentUserProfile(payload: unknown): { profile: UserProfile; userId: number; username: string } | null {
   if (!isObjectRecord(payload)) return null;
 
@@ -167,7 +163,7 @@ function parseCurrentUserProfile(payload: unknown): { profile: UserProfile; user
     .trim();
   const username = pickString(payload.username, "User");
   const name = displayName || fullName || username;
-  const role = pickString(profile?.role, "");
+  const role = parseAppRole(profile?.role);
 
   return {
     userId: pickNumber(payload.id),
@@ -177,6 +173,8 @@ function parseCurrentUserProfile(payload: unknown): { profile: UserProfile; user
       name,
       email: pickString(payload.email),
       phone: pickString(profile?.phone_number, "") || undefined,
+      role,
+      is_active_operator: pickBoolean(profile?.is_active_operator, false),
       is_verified: ["trusted_verifier", "analyst", "admin"].includes(role),
       date_joined: pickString(profile?.created_at, ""),
       profile_picture: undefined,
@@ -288,7 +286,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [role, setRole] = useState<AppRole>("community_reporter");
+  const [role, setRole] = useState<AppRole>("regular_user");
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
   );
@@ -299,6 +297,12 @@ export default function ProfilePage() {
   const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
   const [loading, setLoading] = useState(Boolean(authToken));
   const [activeTab, setActiveTab] = useState("account");
+  const [applying, setApplying] = useState(false);
+  const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [locationStatusMessage, setLocationStatusMessage] = useState<string | null>(null);
+  const [savedLocation, setSavedLocation] = useState<UserLocation | null>(() => getStoredUserLocation());
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
@@ -319,6 +323,74 @@ export default function ProfilePage() {
     router.push(path);
   }, [router]);
 
+  const handleTurnOnLocationAccess = useCallback(async () => {
+    setLocationBusy(true);
+    setLocationStatusMessage(null);
+    try {
+      const next = await requestAndStoreUserLocation({ timeoutMs: 10000, enableHighAccuracy: true });
+      if (!next) {
+        setLocationStatusMessage("Location access is still off. Please allow location in your browser and try again.");
+        return;
+      }
+
+      setSavedLocation(next);
+      setLocationStatusMessage("Location access is on and your location has been updated.");
+    } finally {
+      setLocationBusy(false);
+    }
+  }, []);
+
+  const canApplyCommunityReporter = role === "regular_user" && Boolean(profile?.is_active_operator);
+
+  const handleApplyCommunityReporter = useCallback(async () => {
+    if (!authToken || !canApplyCommunityReporter) return;
+
+    setApplying(true);
+    setApplyError(null);
+    setApplyMessage(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/apply-community-reporter/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${authToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        user?: { profile?: { role?: string } };
+      };
+
+      if (!response.ok) {
+        setApplyError(payload.detail ?? "Unable to process application right now.");
+        return;
+      }
+
+      const upgradedRole = parseAppRole(payload.user?.profile?.role);
+      setRole(upgradedRole);
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              role: upgradedRole,
+              is_verified: ["trusted_verifier", "analyst", "admin"].includes(upgradedRole),
+            }
+          : current,
+      );
+      setApplyMessage(payload.detail ?? "Application approved. You are now a community reporter.");
+
+      if (payload.user && typeof window !== "undefined") {
+        window.localStorage.setItem("geopulse.user", JSON.stringify(payload.user));
+      }
+    } catch {
+      setApplyError("Unable to process application right now.");
+    } finally {
+      setApplying(false);
+    }
+  }, [authToken, canApplyCommunityReporter]);
+
   useEffect(() => {
     if (!authToken) return;
     let active = true;
@@ -335,31 +407,16 @@ export default function ProfilePage() {
 
         if (!active) return;
 
-        let currentUser: CurrentUserResponse | null = null;
+        let currentUserId: number | null = null;
+        let currentUsername: string | null = null;
 
         if (meRes?.ok) {
           const meData = (await meRes.json()) as unknown;
           const parsedUser = parseCurrentUserProfile(meData);
           if (parsedUser) {
-            currentUser = {
-              id: parsedUser.userId,
-              username: parsedUser.username,
-              email: parsedUser.profile.email,
-              first_name: "",
-              last_name: "",
-              profile: {
-                id: parsedUser.profile.id,
-                display_name: parsedUser.profile.name,
-                role: parsedUser.profile.is_verified ? "trusted_verifier" : "community_reporter",
-                organization: "",
-                phone_number: parsedUser.profile.phone ?? "",
-                region_name: "",
-                is_active_operator: true,
-                metadata: {},
-                created_at: parsedUser.profile.date_joined,
-                updated_at: parsedUser.profile.date_joined,
-              },
-            };
+            currentUserId = parsedUser.userId;
+            currentUsername = parsedUser.username;
+            setRole(parsedUser.profile.role);
             setProfile(parsedUser.profile);
           }
         }
@@ -368,8 +425,8 @@ export default function ProfilePage() {
           const sourceData = (await sourceRes.json()) as unknown;
           const sourceProfiles = parseSourceProfiles(sourceData);
           const matchedSource =
-            sourceProfiles.find((item) => item.user === currentUser?.id) ??
-            sourceProfiles.find((item) => item.linked_username === currentUser?.username) ??
+            sourceProfiles.find((item) => item.user === currentUserId) ??
+            sourceProfiles.find((item) => item.linked_username === currentUsername) ??
             sourceProfiles[0];
           if (matchedSource) {
             setTrustMetrics(buildTrustMetrics(matchedSource));
@@ -492,12 +549,82 @@ export default function ProfilePage() {
                     </div>
                   )}
                   <div className="flex items-center justify-between">
+                    <span className="text-xs text-white/50">Role</span>
+                    <span className="text-sm text-white">
+                      {profile?.role === "regular_user"
+                        ? "Regular User"
+                        : profile?.role === "community_reporter"
+                          ? "Community Reporter"
+                          : profile?.role === "trusted_verifier"
+                            ? "Trusted Verifier"
+                            : profile?.role === "analyst"
+                              ? "Analyst"
+                              : "Admin"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-white/50">Activity Status</span>
+                    <span className={`text-sm font-semibold ${profile?.is_active_operator ? "text-emerald-300" : "text-amber-300"}`}>
+                      {profile?.is_active_operator ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
                     <span className="text-xs text-white/50">Verification Status</span>
                     <span className="text-sm text-emerald-300 font-semibold">
                       {profile?.is_verified ? "✓ Verified" : "Pending"}
                     </span>
                   </div>
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/[0.06] bg-[#08101F]/90 p-4">
+                <h3 className="mb-2 text-sm font-semibold text-white">Community Reporter Access</h3>
+                <p className="text-xs text-white/45">
+                  Active regular users can apply to become community reporters. Once approved, Verification Queue appears in your dashboard.
+                </p>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    disabled={!canApplyCommunityReporter || applying}
+                    onClick={() => void handleApplyCommunityReporter()}
+                    className={`rounded-lg border px-3 py-2.5 text-sm font-semibold transition ${
+                      canApplyCommunityReporter && !applying
+                        ? "border-cyan-400/35 bg-cyan-400/10 text-cyan-200 hover:bg-cyan-400/20"
+                        : "border-white/[0.08] bg-white/[0.03] text-white/40"
+                    }`}
+                  >
+                    {applying ? "Applying..." : role === "community_reporter" ? "Already Community Reporter" : "Apply Now"}
+                  </button>
+                </div>
+                {applyMessage ? <p className="mt-2 text-xs text-emerald-300">{applyMessage}</p> : null}
+                {applyError ? <p className="mt-2 text-xs text-red-300">{applyError}</p> : null}
+                {!profile?.is_active_operator ? (
+                  <p className="mt-2 text-xs text-amber-300">
+                    Your account needs active status before you can apply.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="rounded-2xl border border-white/[0.06] bg-[#08101F]/90 p-4">
+                <h3 className="mb-2 text-sm font-semibold text-white">Location Access</h3>
+                <p className="text-xs text-white/45">
+                  Turn on location access so dashboard and verification queue show alerts around your current area.
+                </p>
+                <p className="mt-2 text-xs text-white/35">
+                  Status: {savedLocation ? "Enabled" : "Off"}
+                  {savedLocation?.label ? ` · ${savedLocation.label}` : ""}
+                </p>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleTurnOnLocationAccess()}
+                    disabled={locationBusy}
+                    className="rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:border-white/[0.08] disabled:bg-white/[0.03] disabled:text-white/40"
+                  >
+                    {locationBusy ? "Turning on..." : "Turn on location access"}
+                  </button>
+                </div>
+                {locationStatusMessage ? <p className="mt-2 text-xs text-cyan-200">{locationStatusMessage}</p> : null}
               </div>
 
               <div className="rounded-2xl border border-white/[0.06] bg-[#08101F]/90 p-4">

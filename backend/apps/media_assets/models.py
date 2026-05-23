@@ -42,6 +42,13 @@ class PatrolUpload(models.Model):
     summary = models.TextField(blank=True)
     recorded_at = models.DateTimeField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    incident = models.ForeignKey(
+        "incidents.Incident",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patrol_uploads",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

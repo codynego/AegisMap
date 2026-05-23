@@ -80,7 +80,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     role = serializers.ChoiceField(
         choices=UserRole.choices,
         required=False,
-        default=UserRole.COMMUNITY_REPORTER,
+        default=UserRole.REGULAR_USER,
     )
     organization = serializers.CharField(required=False, allow_blank=True)
     phone_number = serializers.CharField(required=False, allow_blank=True)
@@ -104,7 +104,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         profile_fields = {
             "display_name": validated_data.pop("display_name", ""),
-            "role": UserRole.COMMUNITY_REPORTER,
+            "role": UserRole.REGULAR_USER,
             "organization": validated_data.pop("organization", ""),
             "phone_number": validated_data.pop("phone_number", ""),
             "region_name": validated_data.pop("region_name", ""),

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
+import { requestAndStoreUserLocation } from "@/lib/user-location";
 
 type AuthMode = "login" | "register";
 
@@ -127,6 +128,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       window.localStorage.setItem("geopulse.token", data.token);
       window.localStorage.setItem("geopulse.user", JSON.stringify(data.user));
+
+      // Prompt for geolocation right after auth so dashboard can personalize immediately.
+      await requestAndStoreUserLocation({ timeoutMs: 10000, enableHighAccuracy: true }).catch(() => null);
+
       window.location.assign("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to complete the request.");

@@ -1,4 +1,4 @@
-export type AppRole = "community_reporter" | "trusted_verifier" | "analyst" | "admin";
+export type AppRole = "regular_user" | "community_reporter" | "trusted_verifier" | "analyst" | "admin";
 
 export type StoredSessionUser = {
   id?: number;
@@ -42,10 +42,16 @@ export function getStoredSessionUser() {
 
 export function getUserRole(user: StoredSessionUser | null): AppRole {
   const role = user?.profile?.role;
-  if (role === "trusted_verifier" || role === "analyst" || role === "admin") {
+  if (
+    role === "regular_user" ||
+    role === "community_reporter" ||
+    role === "trusted_verifier" ||
+    role === "analyst" ||
+    role === "admin"
+  ) {
     return role;
   }
-  return "community_reporter";
+  return "regular_user";
 }
 
 export function isAnalystRole(role: AppRole) {
@@ -53,7 +59,7 @@ export function isAnalystRole(role: AppRole) {
 }
 
 export function isTrustedReporterRole(role: AppRole) {
-  return role === "trusted_verifier";
+  return role === "trusted_verifier" || role === "community_reporter";
 }
 
 export function getDefaultRouteForRole(role: AppRole) {

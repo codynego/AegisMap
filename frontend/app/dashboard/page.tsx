@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole, getPublicNavItems, INTERNAL_NAV_ITEMS, isAnalystRole, type NavItem } from "@/lib/access";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
+import {
+  getStoredUserLocation,
+  haversineKm,
+  requestAndStoreUserLocation,
+  resolveNearestHub,
+  stateForCoordinates,
+} from "@/lib/user-location";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +22,10 @@ type DashboardAlert = {
   title: string;
   body: string;
   meta: string;
+  locationName?: string;
+  locationState?: string;
+  locationLatitude?: number | string | null;
+  locationLongitude?: number | string | null;
 };
 
 type IncidentRecord = {
@@ -43,8 +54,6 @@ type WatchZoneRecord = {
 
 type ApiListResponse<T> = { results?: T[] };
 
-type AreaHub = { label: string; state: string; latitude: number; longitude: number };
-
 type SafetyLevel = "low" | "guarded" | "elevated" | "high" | "critical";
 
 type NearbyIncident = {
@@ -65,21 +74,6 @@ type NearbyIncident = {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
 
-const AREA_HUBS: AreaHub[] = [
-  { label: "Lagos", state: "Lagos", latitude: 6.5244, longitude: 3.3792 },
-  { label: "Ibadan", state: "Oyo", latitude: 7.3775, longitude: 3.947 },
-  { label: "Abeokuta", state: "Ogun", latitude: 7.1569, longitude: 3.3451 },
-  { label: "Benin City", state: "Edo", latitude: 6.335, longitude: 5.6037 },
-  { label: "Port Harcourt", state: "Rivers", latitude: 4.8156, longitude: 7.0498 },
-  { label: "Enugu", state: "Enugu", latitude: 6.4584, longitude: 7.5464 },
-  { label: "Abuja", state: "FCT", latitude: 9.0579, longitude: 7.4951 },
-  { label: "Kaduna", state: "Kaduna", latitude: 10.5222, longitude: 7.4384 },
-  { label: "Kano", state: "Kano", latitude: 12.0022, longitude: 8.592 },
-  { label: "Jos", state: "Plateau", latitude: 9.8965, longitude: 8.8583 },
-  { label: "Maiduguri", state: "Borno", latitude: 11.8311, longitude: 13.1509 },
-  { label: "Calabar", state: "Cross River", latitude: 4.9757, longitude: 8.3417 },
-];
-
 const RISK_STYLE: Record<SafetyLevel, { label: string; chip: string; border: string; dot: string; score: string }> = {
   low:      { label: "Low risk",  chip: "bg-emerald-500/10 text-emerald-300", border: "border-emerald-500/20", dot: "bg-emerald-400", score: "text-emerald-300" },
   guarded:  { label: "Guarded",   chip: "bg-cyan-500/10 text-cyan-300",       border: "border-cyan-500/20",    dot: "bg-cyan-400",    score: "text-cyan-300" },
@@ -96,6 +90,17 @@ function toNum(v: number | string | null | undefined): number | null {
   return null;
 }
 
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function getList<T>(payload: T[] | ApiListResponse<T>): T[] {
   return Array.isArray(payload) ? payload : payload.results ?? [];
 }
@@ -108,25 +113,6 @@ function relTime(v?: string | null): string {
   const h = Math.round(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.round(h / 24)}d ago`;
-}
-
-function haversine(aLat: number, aLng: number, bLat: number, bLng: number): number {
-  const R = 6371, r = (v: number) => (v * Math.PI) / 180;
-  const dLat = r(bLat - aLat), dLng = r(bLng - aLng);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function nearestHub(lat: number, lng: number): AreaHub {
-  return AREA_HUBS.reduce((best, hub) => {
-    const d = haversine(lat, lng, hub.latitude, hub.longitude);
-    const bd = haversine(lat, lng, best.latitude, best.longitude);
-    return d < bd ? hub : best;
-  }, AREA_HUBS[0]);
-}
-
-function stateForCoordinates(lat: number, lng: number): string {
-  return nearestHub(lat, lng).state;
 }
 
 function scoreToLevel(s: number): SafetyLevel {
@@ -188,6 +174,13 @@ function levelSummary(level: SafetyLevel, area: string): string {
 }
 
 function isAlertRelevantToState(alert: DashboardAlert, state: string, area: string) {
+  if (!state || state.toLowerCase() === "unknown") {
+    return false;
+  }
+  const alertState = (alert.locationState ?? "").trim().toLowerCase();
+  if (alertState) {
+    return alertState === state.toLowerCase();
+  }
   const haystack = `${alert.title} ${alert.body} ${alert.meta}`.toLowerCase();
   return haystack.includes(state.toLowerCase()) || haystack.includes(area.toLowerCase());
 }
@@ -377,10 +370,26 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [loading, setLoading] = useState(Boolean(authToken));
 
-  const [position, setPosition] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [position, setPosition] = useState<{ latitude: number; longitude: number } | null>(() => {
+    const stored = getStoredUserLocation();
+    return stored ? { latitude: stored.latitude, longitude: stored.longitude } : null;
+  });
   const [locationDenied, setLocationDenied] = useState(() =>
     typeof window === "undefined" ? false : !navigator.geolocation,
   );
+
+  const anchor = useMemo(
+    () => position ?? { latitude: 0, longitude: 0 },
+    [position],
+  );
+  const [scoreNow] = useState(() => Date.now());
+
+  const currentArea = useMemo(() => {
+    if (!position) {
+      return { label: "Unknown location", state: "Unknown", latitude: 0, longitude: 0 };
+    }
+    return resolveNearestHub(position.latitude, position.longitude);
+  }, [position]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
@@ -393,14 +402,22 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !navigator.geolocation) {
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setPosition({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-      () => setLocationDenied(true),
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
+    if (typeof window === "undefined") return;
+
+    let active = true;
+    void requestAndStoreUserLocation({ timeoutMs: 10000, enableHighAccuracy: true }).then((next) => {
+      if (!active) return;
+      if (!next) {
+        setLocationDenied(true);
+        return;
+      }
+      setPosition({ latitude: next.latitude, longitude: next.longitude });
+      setLocationDenied(false);
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -411,16 +428,27 @@ export default function DashboardPage() {
     async function load() {
       setLoading(true);
       try {
+        const alertsUrl = new URL(`${API_BASE_URL}/alerts/`);
+        if (position) {
+          alertsUrl.searchParams.set("state", currentArea.state);
+        }
+
         const [iRes, wRes, aRes] = await Promise.all([
           fetch(`${API_BASE_URL}/incidents/`, { headers: h }),
           fetch(`${API_BASE_URL}/watch-zones/`, { headers: h }),
-          fetch(`${API_BASE_URL}/alerts/`, { headers: h }),
+          position
+            ? fetch(alertsUrl.toString(), { headers: h })
+            : Promise.resolve(null),
         ]);
         if (!active) return;
-        const [iData, wData, aData] = await Promise.all([iRes.json(), wRes.json(), aRes.json()]);
+        const [iData, wData, aData] = await Promise.all([
+          iRes.json(),
+          wRes.json(),
+          aRes ? aRes.json() : Promise.resolve(null),
+        ]);
         if (iRes.ok) setIncidents(getList(iData));
         if (wRes.ok) setWatchZones(getList(wData));
-        if (aRes.ok) {
+        if (aRes?.ok) {
           setAlerts(
             getList(aData as ApiListResponse<Record<string, unknown>>).map((a, i) => {
               const sev = String(a.severity ?? "info").toLowerCase();
@@ -431,9 +459,15 @@ export default function DashboardPage() {
                 title: String(a.title ?? "Alert"),
                 body: String(a.message ?? ""),
                 meta: String(a.status ?? "OPEN").toUpperCase(),
+                locationName: String(a.location_name ?? a.locationName ?? ""),
+                locationState: String(a.location_state ?? a.locationState ?? ""),
+                locationLatitude: toNullableNumber(a.location_latitude ?? a.locationLatitude),
+                locationLongitude: toNullableNumber(a.location_longitude ?? a.locationLongitude),
               };
             }),
           );
+        } else if (!position) {
+          setAlerts([]);
         }
       } finally {
         if (active) setLoading(false);
@@ -442,17 +476,11 @@ export default function DashboardPage() {
 
     void load();
     return () => { active = false; };
-  }, [authToken]);
-
-  const anchor = useMemo(
-    () => position ?? { latitude: AREA_HUBS[0].latitude, longitude: AREA_HUBS[0].longitude },
-    [position],
-  );
-  const [scoreNow] = useState(() => Date.now());
-
-  const currentArea = useMemo(() => nearestHub(anchor.latitude, anchor.longitude), [anchor]);
+  }, [authToken, position, currentArea.state]);
 
   const nearbyIncidents = useMemo(() => {
+    if (!position) return [];
+
     return incidents
       .flatMap((inc): NearbyIncident[] => {
         if (!isActive(inc)) return [];
@@ -463,7 +491,7 @@ export default function DashboardPage() {
           id: inc.id, title: inc.title, incidentType: inc.incident_type,
           severity: inc.severity, confidence: inc.confidence, status: inc.status,
           summary: inc.summary, detectedAt: inc.detected_at || inc.created_at,
-          distanceKm: haversine(anchor.latitude, anchor.longitude, lat, lng),
+          distanceKm: haversineKm(anchor.latitude, anchor.longitude, lat, lng),
           locationName: inc.location_name,
         }];
       })
@@ -473,20 +501,25 @@ export default function DashboardPage() {
   }, [anchor, currentArea.state, incidents]);
 
   const nearbyZones = useMemo(() => {
+    if (!position) return [];
+
     return watchZones
       .flatMap((z) => {
         const lat = toNum(z.centroid_latitude), lng = toNum(z.centroid_longitude), score = toNum(z.current_risk_score);
         if (lat === null || lng === null || score === null) return [];
         if (stateForCoordinates(lat, lng) !== currentArea.state) return [];
-        return [{ id: z.id, name: z.name, level: z.current_risk_level, score, distanceKm: haversine(anchor.latitude, anchor.longitude, lat, lng) }];
+        return [{ id: z.id, name: z.name, level: z.current_risk_level, score, distanceKm: haversineKm(anchor.latitude, anchor.longitude, lat, lng) }];
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, 4);
   }, [anchor, currentArea.state, watchZones]);
 
   const stateAlerts = useMemo(
-    () => alerts.filter((alert) => isAlertRelevantToState(alert, currentArea.state, currentArea.label)),
-    [alerts, currentArea.label, currentArea.state],
+    () => {
+      if (!position) return [];
+      return alerts.filter((alert) => isAlertRelevantToState(alert, currentArea.state, currentArea.label));
+    },
+    [alerts, currentArea.label, currentArea.state, position],
   );
 
   const severeRecentIncidentCount = useMemo(
@@ -562,6 +595,17 @@ export default function DashboardPage() {
     window.location.assign("/login");
   }, []);
 
+  const handleTurnOnLocation = useCallback(async () => {
+    const next = await requestAndStoreUserLocation({ timeoutMs: 10000, enableHighAccuracy: true });
+    if (!next) {
+      setLocationDenied(true);
+      return;
+    }
+
+    setPosition({ latitude: next.latitude, longitude: next.longitude });
+    setLocationDenied(false);
+  }, []);
+
   const nav = useCallback((i: number) => {
     setActiveNav(i);
     const next = navItems[i];
@@ -574,7 +618,7 @@ export default function DashboardPage() {
 
   const locationLabel = position
     ? `${currentArea.label} · ${position.latitude.toFixed(3)}, ${position.longitude.toFixed(3)}`
-    : `${currentArea.label}, ${currentArea.state}`;
+    : "Location access is off";
 
   return (
     <div className="min-h-screen bg-[#060B16] text-white antialiased">
@@ -609,6 +653,23 @@ export default function DashboardPage() {
         </header>
 
         <main className="space-y-3 sm:space-y-4 px-3 py-3 sm:px-6 lg:px-8">
+
+          {locationDenied ? (
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 sm:p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-amber-200">
+                  Location access is off. Turn it on to get precise nearby alerts and safer route intelligence.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleTurnOnLocation()}
+                  className="rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-amber-100 transition hover:bg-amber-300/20"
+                >
+                  Turn on location access
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {/* ── Safety status card ── */}
           <div className={`rounded-3xl border ${cfg.border} bg-[#08101F]/90 p-3 sm:p-5`}>

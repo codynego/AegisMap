@@ -27,7 +27,7 @@ class AuthFlowTests(TestCase):
         self.assertEqual(payload["user"]["username"], "new_reporter")
         self.assertEqual(
             payload["user"]["profile"]["role"],
-            "community_reporter",
+            "regular_user",
         )
 
 
@@ -67,3 +67,39 @@ class DashboardAccessTests(TestCase):
     def test_health_endpoint_is_public(self):
         response = self.client.get("/api/health/")
         self.assertEqual(response.status_code, 200)
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class CommunityReporterApplicationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="public_user",
+            email="public_user@example.com",
+            password="strongpass123",
+        )
+        self.profile = UserProfile.objects.create(
+            user=self.user,
+            role=UserRole.REGULAR_USER,
+            is_active_operator=True,
+        )
+        token = Token.objects.create(user=self.user)
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Token {token.key}"
+
+    def test_apply_community_reporter_upgrades_active_regular_user(self):
+        response = self.client.post("/api/auth/apply-community-reporter/")
+
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.role, UserRole.COMMUNITY_REPORTER)
+        payload = response.json()
+        self.assertEqual(payload["user"]["profile"]["role"], UserRole.COMMUNITY_REPORTER)
+
+    def test_apply_community_reporter_blocks_inactive_regular_user(self):
+        self.profile.is_active_operator = False
+        self.profile.save(update_fields=["is_active_operator"])
+
+        response = self.client.post("/api/auth/apply-community-reporter/")
+
+        self.assertEqual(response.status_code, 400)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.role, UserRole.REGULAR_USER)

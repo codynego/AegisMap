@@ -22,6 +22,7 @@ from .serializers import (
     SignalVerificationSubmitSerializer,
 )
 from .services import assess_signal, dispatch_signal_pipeline, submit_signal_verification
+from apps.incidents.models import Incident
 
 
 class SignalViewSet(viewsets.ModelViewSet):
@@ -97,6 +98,32 @@ class SignalViewSet(viewsets.ModelViewSet):
         submitted_by = self.request.user if self.request.user.is_authenticated else None
         signal = serializer.save(submitted_by=submitted_by)
         dispatch_signal_pipeline(signal)
+        # create a corresponding Incident record for every submitted signal
+        try:
+            Incident.objects.get_or_create(
+                primary_signal=signal,
+                defaults={
+                    "title": signal.title,
+                    "incident_type": signal.category,
+                    "confidence": signal.confidence if signal.confidence else "corroborated",
+                    "severity": signal.severity or "low",
+                    "status": "open",
+                    "location_name": signal.location_name or "",
+                    "latitude": signal.latitude,
+                    "longitude": signal.longitude,
+                    "summary": signal.description or "",
+                    "metadata": {**(signal.metadata or {}), "created_from_signal": str(signal.id)},
+                },
+            )
+        except Exception:
+            # if incident creation fails, don't block signal creation; record via audit
+            record_audit_event(
+                "incident.create.failed",
+                actor=submitted_by,
+                obj=signal,
+                request=self.request,
+                description=f"Failed to auto-create incident for signal {signal.id}",
+            )
         record_audit_event(
             "signal.created",
             actor=submitted_by,

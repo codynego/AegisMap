@@ -65,3 +65,41 @@ class AlertWorkflowTests(TestCase):
                 metadata__signal_id=str(signal.pk),
             ).exists()
         )
+
+    def test_alert_payload_includes_location_metadata(self):
+        alert = Alert.objects.create(
+            title="Risk changed for Route A",
+            message="Risk increased because of nearby signals.",
+            severity="high",
+            metadata={
+                "location_name": "Abuja",
+                "location_state": "FCT",
+                "location_latitude": 9.0579,
+                "location_longitude": 7.4951,
+            },
+        )
+
+        response = self.client.get("/api/alerts/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(any(item["id"] == alert.id and item["location_state"] == "FCT" for item in payload))
+
+    def test_alert_list_filters_by_state(self):
+        Alert.objects.create(
+            title="FCT alert",
+            message="Only for Abuja users.",
+            severity="high",
+            metadata={"location_name": "Abuja", "location_state": "FCT"},
+        )
+        Alert.objects.create(
+            title="Lagos alert",
+            message="Only for Lagos users.",
+            severity="high",
+            metadata={"location_name": "Lagos", "location_state": "Lagos"},
+        )
+
+        response = self.client.get("/api/alerts/?state=FCT")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["title"], "FCT alert")

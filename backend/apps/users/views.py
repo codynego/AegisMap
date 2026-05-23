@@ -8,7 +8,7 @@ from rest_framework.views import APIView
 
 from apps.audit_logs.services import record_audit_event
 
-from .models import SourceProfile, UserProfile
+from .models import SourceProfile, UserProfile, UserRole
 from .permissions import IsAnalystOrAdmin
 from .serializers import (
     LoginSerializer,
@@ -90,6 +90,49 @@ class CurrentUserView(APIView):
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+
+class ApplyCommunityReporterView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, _ = UserProfile.objects.get_or_create(
+            user=request.user,
+            defaults={"role": UserRole.REGULAR_USER},
+        )
+
+        if profile.role != UserRole.REGULAR_USER:
+            return Response(
+                {
+                    "detail": "User already has a non-regular role.",
+                    "user": UserSerializer(request.user).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if not profile.is_active_operator:
+            return Response(
+                {"detail": "Only active users can apply for community reporter access."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        profile.role = UserRole.COMMUNITY_REPORTER
+        profile.save(update_fields=["role", "updated_at"])
+
+        record_audit_event(
+            "auth.apply_community_reporter",
+            actor=request.user,
+            request=request,
+            description=f"User '{request.user.username}' upgraded to community reporter.",
+        )
+
+        return Response(
+            {
+                "detail": "Application approved. You are now a community reporter.",
+                "user": UserSerializer(request.user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
