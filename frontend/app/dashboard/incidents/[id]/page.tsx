@@ -37,11 +37,15 @@ export default function IncidentDetailPage() {
       });
       if (incRes.ok) setIncident(await incRes.json());
 
-      // patrol uploads for this incident
+      // patrol uploads for this incident (API may paginate)
       const pRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api"}/patrol-uploads/?incident=${incidentId}`, {
         headers: authToken ? { Authorization: `Token ${authToken}` } : undefined,
       });
-      if (pRes.ok) setPatrolUploads(await pRes.json());
+      if (pRes.ok) {
+        const data = await pRes.json();
+        const list = Array.isArray(data) ? data : data.results ?? [];
+        setPatrolUploads(list);
+      }
 
       // available (unattached) uploads - fetch all then filter client-side
       const aRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api"}/patrol-uploads/`, {

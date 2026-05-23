@@ -2,6 +2,7 @@ from django.test import TestCase, override_settings
 
 from apps.incidents.models import Incident, Pattern, SignalCluster
 from apps.signals.models import Signal
+from rest_framework.test import APIClient
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -45,3 +46,40 @@ class IntelligencePromotionTests(TestCase):
         self.assertEqual(Pattern.objects.count(), 1)
         self.assertEqual(Incident.objects.count(), 1)
         self.assertEqual(Signal.objects.filter(status="escalated").count(), 3)
+
+
+class IncidentApproveTests(TestCase):
+    def setUp(self):
+        # create users
+        from django.contrib.auth import get_user_model
+        from apps.users.models import UserProfile, UserRole
+
+        User = get_user_model()
+        self.admin = User.objects.create_user(username="admin", password="pass")
+        UserProfile.objects.create(user=self.admin, role=UserRole.ADMIN)
+
+        self.analyst = User.objects.create_user(username="analyst", password="pass")
+        UserProfile.objects.create(user=self.analyst, role=UserRole.ANALYST)
+
+        self.regular = User.objects.create_user(username="regular", password="pass")
+        UserProfile.objects.create(user=self.regular, role=UserRole.COMMUNITY_REPORTER)
+
+        self.client = APIClient()
+        self.incident = Incident.objects.create(title="Test Incident", incident_type="suspicious_activity", summary="test")
+
+    def test_admin_can_approve(self):
+        self.client.login(username="admin", password="pass")
+        res = self.client.post(f"/api/incidents/{self.incident.id}/approve/")
+        self.assertEqual(res.status_code, 200)
+        self.incident.refresh_from_db()
+        self.assertEqual(self.incident.confidence, "high")
+
+    def test_analyst_cannot_approve(self):
+        self.client.login(username="analyst", password="pass")
+        res = self.client.post(f"/api/incidents/{self.incident.id}/approve/")
+        self.assertEqual(res.status_code, 403)
+
+    def test_regular_cannot_approve(self):
+        self.client.login(username="regular", password="pass")
+        res = self.client.post(f"/api/incidents/{self.incident.id}/approve/")
+        self.assertEqual(res.status_code, 403)

@@ -528,7 +528,7 @@ export function DashboardMap({
   // ── Address geocode ──
   useEffect(() => {
     const query = addressQuery.trim();
-    if (!token || query.length < 2) {
+    if (query.length < 2) {
       const resetTimer = window.setTimeout(() => {
         setAddressOptions([]);
         setIsLoadingAddressOptions(false);

@@ -6,7 +6,8 @@ import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
-import { searchLocations, type LocationSearchResult } from "@/lib/location-search";
+import { searchLocations, searchStateSuggestions, type LocationSearchResult } from "@/lib/location-search";
+import { searchAreaHubs } from "@/lib/user-location";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ type RouteHubSuggestion = {
   latitude: number;
   longitude: number;
   description: string;
+  kind: "state" | "city" | "place";
 };
 
 type RouteStop = {
@@ -235,6 +237,16 @@ function makeRouteHubFromLocation(result: LocationSearchResult, kind: "origin" |
     state: result.state,
     latitude: result.latitude,
     longitude: result.longitude,
+  };
+}
+
+function makeRouteHubFromSuggestion(suggestion: RouteHubSuggestion, kind: "origin" | "destination"): RouteHub {
+  return {
+    id: `custom-${kind}-${suggestion.id}`,
+    label: suggestion.label,
+    state: suggestion.state,
+    latitude: suggestion.latitude,
+    longitude: suggestion.longitude,
   };
 }
 
@@ -1413,6 +1425,18 @@ export default function RouteIntelligencePage() {
   const originSearchState = currentOriginHub?.state ?? customOrigin?.state ?? routeHubs.find((hub) => hub.id === originId)?.state ?? routeHubs[0]?.state ?? "Lagos";
   const destinationSearchState = customDestination?.state ?? routeHubs.find((hub) => hub.id === destinationId)?.state ?? routeHubs[1]?.state ?? "Lagos";
 
+  const mapCitySuggestions = useCallback((results: Array<{ id: string; label: string; state: string; latitude: number; longitude: number }>): RouteHubSuggestion[] => {
+    return results.map((hub) => ({
+      id: hub.id,
+      label: hub.label,
+      state: hub.state,
+      latitude: hub.latitude,
+      longitude: hub.longitude,
+      description: "City",
+      kind: "city",
+    }));
+  }, []);
+
   useEffect(() => {
     if (originInput.trim().length < 2) {
       return;
@@ -1420,22 +1444,20 @@ export default function RouteIntelligencePage() {
     let active = true;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const remote = await searchLocations(originInput, 5, { state: originSearchState });
+        const remote = await searchLocations(originInput, 5);
         if (!active) return;
         const normalizedInput = originInput.trim().toLowerCase();
-        const normalizedState = originSearchState.trim().toLowerCase();
-        const local = routeHubs
-          .filter((hub) => hub.state.trim().toLowerCase() === normalizedState)
-          .filter((hub) => !normalizedInput || hub.label.toLowerCase().includes(normalizedInput) || normalizedInput === normalizedState)
-          .slice(0, 4)
-          .map((hub) => ({
-            id: hub.id,
+        const stateSuggestions = searchStateSuggestions(originInput, 5)
+          .map((state) => ({ ...state, kind: "state" as const }));
+        const localCities = mapCitySuggestions(
+          searchAreaHubs(originInput, 8).map((hub) => ({
+            id: `area-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
             label: hub.label,
             state: hub.state,
             latitude: hub.latitude,
             longitude: hub.longitude,
-            description: hub.state,
-          }));
+          })),
+        );
         const remoteMapped = remote.map((result) => ({
           id: `remote-${result.id}`,
           label: result.label,
@@ -1443,11 +1465,13 @@ export default function RouteIntelligencePage() {
           latitude: result.latitude,
           longitude: result.longitude,
           description: result.description,
+          kind: "place" as const,
         }));
-        const merged = [...local, ...remoteMapped].filter(
-          (suggestion, index, self) => self.findIndex((item) => item.label === suggestion.label) === index,
+        const merged = [...stateSuggestions, ...localCities, ...remoteMapped].filter(
+          (suggestion, index, self) =>
+            self.findIndex((item) => item.label === suggestion.label && item.state === suggestion.state && item.kind === suggestion.kind) === index,
         );
-        setOriginSuggestions(merged.slice(0, 6));
+        setOriginSuggestions(merged.slice(0, 8));
       } catch {
         if (active) setOriginSuggestions([]);
       }
@@ -1465,22 +1489,20 @@ export default function RouteIntelligencePage() {
     let active = true;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const remote = await searchLocations(destinationInput, 5, { state: destinationSearchState });
+        const remote = await searchLocations(destinationInput, 5);
         if (!active) return;
         const normalizedInput = destinationInput.trim().toLowerCase();
-        const normalizedState = destinationSearchState.trim().toLowerCase();
-        const local = routeHubs
-          .filter((hub) => hub.state.trim().toLowerCase() === normalizedState)
-          .filter((hub) => !normalizedInput || hub.label.toLowerCase().includes(normalizedInput) || normalizedInput === normalizedState)
-          .slice(0, 4)
-          .map((hub) => ({
-            id: hub.id,
+        const stateSuggestions = searchStateSuggestions(destinationInput, 5)
+          .map((state) => ({ ...state, kind: "state" as const }));
+        const localCities = mapCitySuggestions(
+          searchAreaHubs(destinationInput, 8).map((hub) => ({
+            id: `area-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
             label: hub.label,
             state: hub.state,
             latitude: hub.latitude,
             longitude: hub.longitude,
-            description: hub.state,
-          }));
+          })),
+        );
         const remoteMapped = remote.map((result) => ({
           id: `remote-${result.id}`,
           label: result.label,
@@ -1488,11 +1510,13 @@ export default function RouteIntelligencePage() {
           latitude: result.latitude,
           longitude: result.longitude,
           description: result.description,
+          kind: "place" as const,
         }));
-        const merged = [...local, ...remoteMapped].filter(
-          (suggestion, index, self) => self.findIndex((item) => item.label === suggestion.label) === index,
+        const merged = [...stateSuggestions, ...localCities, ...remoteMapped].filter(
+          (suggestion, index, self) =>
+            self.findIndex((item) => item.label === suggestion.label && item.state === suggestion.state && item.kind === suggestion.kind) === index,
         );
-        setDestinationSuggestions(merged.slice(0, 6));
+        setDestinationSuggestions(merged.slice(0, 8));
       } catch {
         if (active) setDestinationSuggestions([]);
       }
@@ -1791,7 +1815,12 @@ export default function RouteIntelligencePage() {
 
   const handleSelectOriginSuggestion = useCallback((suggestion: RouteHubSuggestion) => {
     const localMatch = routeHubs.find((hub) => hub.id === suggestion.id || hub.label === suggestion.label);
-    if (localMatch) {
+    if (suggestion.kind === "state") {
+      const hub = makeRouteHubFromSuggestion(suggestion, "origin");
+      setCustomOrigin(hub);
+      setOriginId(hub.id);
+      setOriginInput(hub.label);
+    } else if (localMatch) {
       setCustomOrigin(null);
       setOriginId(localMatch.id);
       setOriginInput(localMatch.label);
@@ -1818,7 +1847,12 @@ export default function RouteIntelligencePage() {
 
   const handleSelectDestinationSuggestion = useCallback((suggestion: RouteHubSuggestion) => {
     const localMatch = routeHubs.find((hub) => hub.id === suggestion.id || hub.label === suggestion.label);
-    if (localMatch) {
+    if (suggestion.kind === "state") {
+      const hub = makeRouteHubFromSuggestion(suggestion, "destination");
+      setCustomDestination(hub);
+      setDestinationId(hub.id);
+      setDestinationInput(hub.label);
+    } else if (localMatch) {
       setCustomDestination(null);
       setDestinationId(localMatch.id);
       setDestinationInput(localMatch.label);

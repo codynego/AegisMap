@@ -1,3 +1,4 @@
+import { searchAreaHubs } from "@/lib/nigeria-locations";
 export type LocationSearchResult = {
   id: string;
   label: string;
@@ -9,7 +10,7 @@ export type LocationSearchResult = {
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
-const NIGERIA_STATE_NAMES = [
+export const NIGERIA_STATE_NAMES = [
   "Abia",
   "Adamawa",
   "Akwa Ibom",
@@ -49,7 +50,7 @@ const NIGERIA_STATE_NAMES = [
   "Zamfara",
 ];
 
-const NIGERIA_STATE_CENTERS: Record<string, { latitude: number; longitude: number }> = {
+export const NIGERIA_STATE_CENTERS: Record<string, { latitude: number; longitude: number }> = {
   "Abia": { latitude: 5.4167, longitude: 7.3667 },
   "Adamawa": { latitude: 9.3265, longitude: 12.3984 },
   "Akwa Ibom": { latitude: 4.9057, longitude: 7.8497 },
@@ -162,6 +163,25 @@ function buildScopedQuery(query: string, state?: string) {
   return `${scopedParts.join(", ")}, Nigeria`;
 }
 
+export function searchStateSuggestions(query: string, limit = 5) {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length < 2) return [];
+
+  return NIGERIA_STATE_NAMES.filter((state) => state.toLowerCase().includes(normalized))
+    .slice(0, limit)
+    .map((state) => {
+      const center = NIGERIA_STATE_CENTERS[state] ?? { latitude: 9.082, longitude: 8.6753 };
+      return {
+        id: `state-${state.toLowerCase().replace(/\s+/g, "-")}`,
+        label: state,
+        description: "State",
+        latitude: center.latitude,
+        longitude: center.longitude,
+        state,
+      } satisfies LocationSearchResult;
+    });
+}
+
 async function fetchLocationFeatures(
   query: string,
   limit: number,
@@ -195,8 +215,32 @@ export async function searchLocations(
   limit = 5,
   options?: { state?: string },
 ): Promise<LocationSearchResult[]> {
-  if (!MAPBOX_TOKEN || query.trim().length < 2) {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length < 2) {
     return [];
+  }
+
+  const localCityResults = searchAreaHubs(normalizedQuery, limit * 2, options).map((hub) => ({
+    id: `city-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
+    label: hub.label,
+    description: "City",
+    latitude: hub.latitude,
+    longitude: hub.longitude,
+    state: hub.state,
+  } satisfies LocationSearchResult));
+  const localStateResults = searchStateSuggestions(normalizedQuery, limit).map((result) => ({
+    id: result.id,
+    label: result.label,
+    description: result.description,
+    latitude: result.latitude,
+    longitude: result.longitude,
+    state: result.state,
+  } satisfies LocationSearchResult));
+
+  if (!MAPBOX_TOKEN) {
+    return [...localStateResults, ...localCityResults]
+      .filter((item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index)
+      .slice(0, limit);
   }
 
   const scopedQuery = buildScopedQuery(query, options?.state);
@@ -247,7 +291,11 @@ export async function searchLocations(
     ];
   });
 
-  return mapped.slice(0, limit);
+  const merged = [...localStateResults, ...localCityResults, ...mapped].filter(
+    (item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index,
+  );
+
+  return merged.slice(0, limit);
 }
 
 export async function reverseGeocodeLocation(latitude: number, longitude: number) {

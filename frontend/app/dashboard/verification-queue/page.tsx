@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
-import { getCurrentRole, getDefaultRouteForRole, isTrustedReporterRole } from "@/lib/access";
+import { getCurrentRole, getDefaultRouteForRole, isTrustedReporterRole, isAnalystRole } from "@/lib/access";
 import {
   getStoredUserLocation,
   haversineKm,
@@ -64,6 +64,7 @@ export default function VerificationQueuePage() {
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : window.localStorage.getItem("geopulse.token"),
   );
+  const queueMode = isAnalystRole(role) ? "analyst" : "community";
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
@@ -72,7 +73,8 @@ export default function VerificationQueuePage() {
 
   useEffect(() => {
     if (!mounted) return;
-    if (!isTrustedReporterRole(role)) {
+    // allow trusted reporters or analysts/admins
+    if (!isTrustedReporterRole(role) && !isAnalystRole(role)) {
       window.location.replace(getDefaultRouteForRole(role));
       return;
     }
@@ -98,19 +100,42 @@ export default function VerificationQueuePage() {
   }, []);
 
   useEffect(() => {
-    if (!authToken || !isTrustedReporterRole(role)) return;
+    if (!authToken) return;
     let active = true;
 
     async function load() {
       setLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/signals/?verification_queue=true`, {
-          headers: { Authorization: `Token ${authToken}` },
-        });
-        if (!response.ok || !active) return;
-        const payload = await response.json();
-        if (!active) return;
-        setSignals(getList(payload));
+        if (isTrustedReporterRole(role)) {
+          const response = await fetch(`${API_BASE_URL}/signals/?verification_queue=true`, {
+            headers: { Authorization: `Token ${authToken}` },
+          });
+          if (!response.ok || !active) return;
+          const payload = await response.json();
+          if (!active) return;
+          setSignals(getList(payload));
+        } else if (isAnalystRole(role)) {
+          const response = await fetch(`${API_BASE_URL}/incidents/?verification_queue=true`, {
+            headers: { Authorization: `Token ${authToken}` },
+          });
+          if (!response.ok || !active) return;
+          const payload = await response.json();
+          if (!active) return;
+          // normalize incidents into SignalRecord-like shape for display
+          const items = (Array.isArray(payload) ? payload : payload.results ?? []).map((it: any) => ({
+            id: String(it.id),
+            title: it.title,
+            description: it.summary ?? "",
+            category: it.incident_type,
+            confidence: it.confidence,
+            severity: it.severity,
+            location_name: it.location_name ?? "",
+            latitude: it.latitude ?? null,
+            longitude: it.longitude ?? null,
+            created_at: it.detected_at ?? it.created_at,
+          }));
+          setSignals(items);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -127,20 +152,31 @@ export default function VerificationQueuePage() {
       if (!authToken) return;
       setSubmittingId(signalId);
       try {
-        await fetch(`${API_BASE_URL}/signals/${signalId}/submit_verification/`, {
-          method: "POST",
-          headers: {
-            Authorization: `Token ${authToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ response }),
-        });
-        setSignals((current) => current.filter((signal) => signal.id !== signalId));
+        if (isTrustedReporterRole(role)) {
+          await fetch(`${API_BASE_URL}/signals/${signalId}/submit_verification/`, {
+            method: "POST",
+            headers: {
+              Authorization: `Token ${authToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ response }),
+          });
+        } else if (isAnalystRole(role)) {
+          await fetch(`${API_BASE_URL}/incidents/${signalId}/submit_verification/`, {
+            method: "POST",
+            headers: {
+              Authorization: `Token ${authToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ response }),
+          });
+        }
+        setSignals((current) => current.filter((s) => s.id !== signalId));
       } finally {
         setSubmittingId(null);
       }
     },
-    [authToken],
+    [authToken, role],
   );
 
   const handleTurnOnLocation = useCallback(async () => {
@@ -172,7 +208,7 @@ export default function VerificationQueuePage() {
       .sort((a, b) => a.distanceKm - b.distanceKm);
   }, [position, signals]);
 
-  if (!mounted || !isTrustedReporterRole(role)) return null;
+  if (!mounted || (!isTrustedReporterRole(role) && !isAnalystRole(role))) return null;
 
   return (
     <div className="min-h-screen bg-[#060B16] text-white antialiased">
@@ -189,7 +225,7 @@ export default function VerificationQueuePage() {
           window.location.assign("/login");
         }}
         role={role}
-        subtitle="Community Reporter Network"
+        subtitle={queueMode === "analyst" ? "Analyst Verification" : "Community Reporter Network"}
       />
 
       <div className="lg:ml-64">
@@ -220,10 +256,13 @@ export default function VerificationQueuePage() {
           <div className="w-full space-y-5">
             <div className="rounded-3xl border border-emerald-500/20 bg-[#08101F]/90 p-5">
               <p className="text-[10px] uppercase tracking-widest text-emerald-300">Verification queue</p>
-              <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Help confirm nearby community reports</h1>
+              <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">
+                {queueMode === "analyst" ? "Review nearby incidents" : "Help confirm nearby community reports"}
+              </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-                Community reporters help strengthen weighted consensus. Your confirmations carry more influence than a standard public vote,
-                but they still do not replace analyst review for sensitive incidents.
+                {queueMode === "analyst"
+                  ? "Analyst votes are weighted higher and can move incidents toward approval or dismissal."
+                  : "Community reporters help strengthen weighted consensus. Your confirmations carry more influence than a standard public vote."}
               </p>
             </div>
 

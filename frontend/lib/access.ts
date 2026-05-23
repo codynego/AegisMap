@@ -22,6 +22,8 @@ export const INTERNAL_NAV_ITEMS: NavItem[] = [
   { label: "Route Intelligence", path: "/dashboard/route-intelligence" },
   { label: "Drone Intelligence", path: "/dashboard/drone-intelligence" },
   { label: "AI Predictions", path: "/dashboard/ai-predictions" },
+  { label: "Incident Management", path: "/dashboard/incidents/management" },
+  { label: "Verification Queue", path: "/dashboard/verification-queue" },
   { label: "Settings", path: "/dashboard/settings" },
 ];
 

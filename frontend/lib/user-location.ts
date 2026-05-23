@@ -1,4 +1,7 @@
 import { reverseGeocodeLocation } from "@/lib/location-search";
+import { AREA_HUBS, type AreaHub } from "@/lib/nigeria-locations";
+
+export { searchAreaHubs } from "@/lib/nigeria-locations";
 
 export type UserLocation = {
   latitude: number;
@@ -8,29 +11,18 @@ export type UserLocation = {
   label?: string;
 };
 
-type AreaHub = {
-  label: string;
-  state: string;
-  latitude: number;
-  longitude: number;
-};
-
 const USER_LOCATION_KEY = "geopulse.location";
 
-const AREA_HUBS: AreaHub[] = [
-  { label: "Lagos", state: "Lagos", latitude: 6.5244, longitude: 3.3792 },
-  { label: "Ibadan", state: "Oyo", latitude: 7.3775, longitude: 3.947 },
-  { label: "Abeokuta", state: "Ogun", latitude: 7.1569, longitude: 3.3451 },
-  { label: "Benin City", state: "Edo", latitude: 6.335, longitude: 5.6037 },
-  { label: "Port Harcourt", state: "Rivers", latitude: 4.8156, longitude: 7.0498 },
-  { label: "Enugu", state: "Enugu", latitude: 6.4584, longitude: 7.5464 },
-  { label: "Abuja", state: "FCT", latitude: 9.0579, longitude: 7.4951 },
-  { label: "Kaduna", state: "Kaduna", latitude: 10.5222, longitude: 7.4384 },
-  { label: "Kano", state: "Kano", latitude: 12.0022, longitude: 8.592 },
-  { label: "Jos", state: "Plateau", latitude: 9.8965, longitude: 8.8583 },
-  { label: "Maiduguri", state: "Borno", latitude: 11.8311, longitude: 13.1509 },
-  { label: "Calabar", state: "Cross River", latitude: 4.9757, longitude: 8.3417 },
-];
+export function searchAreaHubs(query: string, limit = 10): AreaHub[] {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length < 2) return [];
+
+  return AREA_HUBS.filter((hub) => {
+    const label = hub.label.toLowerCase();
+    const state = hub.state.toLowerCase();
+    return label.includes(normalized) || state.includes(normalized);
+  }).slice(0, limit);
+}
 
 export function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371;
