@@ -5,6 +5,7 @@ from rest_framework.response import Response
 
 from apps.audit_logs.services import record_audit_event
 from apps.users.permissions import IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import is_analyst_or_admin
 
 from .models import Alert, AlertRule
 from .serializers import AlertRuleSerializer, AlertSerializer
@@ -31,6 +32,9 @@ class AlertViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status_value)
         if severity:
             queryset = queryset.filter(severity=severity)
+
+        if not is_analyst_or_admin(self.request.user):
+            queryset = queryset.exclude(status="dismissed")
 
         return queryset
 
@@ -67,5 +71,5 @@ class AlertViewSet(viewsets.ModelViewSet):
 
 class AlertRuleViewSet(viewsets.ModelViewSet):
     serializer_class = AlertRuleSerializer
-    permission_classes = [IsAuthenticatedReadAnalystWrite]
+    permission_classes = [IsAnalystOrAdmin]
     queryset = AlertRule.objects.all()

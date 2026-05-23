@@ -91,8 +91,9 @@ const NAV_ITEMS = [
   "Live Intelligence",
   "Incident Reports",
   "Route Intelligence",
-  "AI Predictions",
+  "Analytics",
   "Drone Intelligence",
+  "Settings",
 ];
 
 // Live activity feed items removed — keep the sidebar focused on map controls and incident detail.
@@ -1056,12 +1057,13 @@ export default function LiveIntelligencePage() {
         onLogout={handleLogout}
         onNavSelect={(index) => {
           setActiveNav(index);
-          if (index === 0) router.push("/internal");
-          if (index === 1) router.push("/internal/live-intelligence");
-          if (index === 2) router.push("/internal/incident-reports");
-          if (index === 3) router.push("/internal/route-intelligence");
-          if (index === 4) router.push("/internal/ai-predictions");
-          if (index === 5) router.push("/internal/drone-intelligence");
+          if (index === 0) router.push("/dashboard");
+          if (index === 1) router.push("/dashboard/live-intelligence");
+          if (index === 2) router.push("/dashboard/incident-reports");
+          if (index === 3) router.push("/dashboard/route-intelligence");
+          if (index === 4) router.push("/dashboard/analytics");
+          if (index === 5) router.push("/dashboard/drone-intelligence");
+          if (index === 6) router.push("/dashboard/settings");
         }}
       />
 

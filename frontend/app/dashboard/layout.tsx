@@ -11,11 +11,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   useEffect(() => {
     const token = window.localStorage.getItem("geopulse.token");
-    setAuthorized(Boolean(token));
-
     if (!token) {
       window.location.replace("/login");
+      return;
     }
+
+    setAuthorized(true);
   }, []);
 
   if (authorized !== true) {

@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { getCurrentRole } from "@/lib/access";
+import InternalIncidentReportsPage from "../../internal/incident-reports/page";
 import { formatReportType, REPORT_TYPE_DEFINITIONS } from "@/lib/report-types";
 
 type ExactPin = {
@@ -35,10 +38,13 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Report", icon: "◈", path: "/dashboard/incident-reports" },
   { label: "Routes", icon: "◍", path: "/dashboard/route-intelligence" },
   { label: "Alerts", icon: "◈", path: "/dashboard/ai-predictions" },
-  { label: "Profile", icon: "◉", path: "/dashboard/drone-intelligence" },
+  { label: "Profile", icon: "◉", path: "/dashboard/profile" },
 ];
 
-const REPORT_TYPES = REPORT_TYPE_DEFINITIONS.map(({ value, label }) => ({ value, label })) as const;
+const REPORT_TYPES: Array<{ value: string; label: string }> = REPORT_TYPE_DEFINITIONS.map(({ value, label }) => ({
+  value,
+  label,
+}));
 
 const REPORT_PRESETS: Record<string, { severity: string; confidence: string }> = {
   suspicious_activity: { severity: "medium", confidence: "emerging" },
@@ -255,6 +261,12 @@ function LocationPinIcon() {
 }
 
 export default function IncidentReportsPage() {
+  const role = getCurrentRole();
+
+  if (role === "analyst" || role === "admin") {
+    return <InternalIncidentReportsPage />;
+  }
+
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -556,12 +568,13 @@ export default function IncidentReportsPage() {
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_45%_at_0%_0%,rgba(6,182,212,0.05),transparent)]" />
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_40%_30%_at_100%_100%,rgba(76,215,246,0.04),transparent)]" />
 
-      <Sidebar
+      <DashboardSidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        activeIndex={activeNav}
-        onNavSelect={handleNavSelect}
+        activePath="/dashboard/incident-reports"
+        onNavigate={(path) => router.push(path)}
         onLogout={handleLogout}
+        role={role}
       />
 
       <div className="lg:ml-64">

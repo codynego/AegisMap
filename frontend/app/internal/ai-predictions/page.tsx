@@ -66,15 +66,16 @@ type WatchZonePoint = {
 
 type PredictionCategory =
   | "emerging_hotspot"
-  | "escalation_risk"
-  | "time_based_danger"
+  | "escalating_zone"
+  | "nighttime_risk"
   | "route_instability"
-  | "unusual_activity"
-  | "spillover_risk";
+  | "unusual_activity_spike"
+  | "risk_spillover";
 
 type RiskLevel = "low" | "guarded" | "elevated" | "high" | "critical";
 type PredictionWindow = "24h" | "72h" | "7d";
 type PanelTab = "overview" | "feed" | "trends";
+type ScopeMode = "nearby" | "all" | "custom";
 
 type PredictionRecord = {
   id: string;
@@ -99,16 +100,29 @@ type PredictionRecord = {
   anomalySignal: number;
 };
 
+type NearestZoneMatch = {
+  zone: WatchZonePoint;
+  distanceKm: number;
+};
+
+type ScopeCenter = {
+  latitude: number;
+  longitude: number;
+  label: string;
+};
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
+const DEFAULT_SCOPE_RADIUS_KM = 50;
 
 const NAV_ITEMS = [
-  { label: "Dashboard", path: "/internal" },
-  { label: "Live Intelligence", path: "/internal/live-intelligence" },
-  { label: "Incident Reports", path: "/internal/incident-reports" },
-  { label: "Route Intelligence", path: "/internal/route-intelligence" },
-  { label: "AI Predictions", path: "/internal/ai-predictions" },
-  { label: "Drone Intelligence", path: "/internal/drone-intelligence" },
+  { label: "Dashboard", path: "/dashboard" },
+  { label: "Live Intelligence", path: "/dashboard/live-intelligence" },
+  { label: "Incident Reports", path: "/dashboard/incident-reports" },
+  { label: "Route Intelligence", path: "/dashboard/route-intelligence" },
+  { label: "Analytics", path: "/dashboard/analytics" },
+  { label: "Drone Intelligence", path: "/dashboard/drone-intelligence" },
+  { label: "Settings", path: "/dashboard/settings" },
 ];
 
 const RISK_CONFIG: Record<RiskLevel, { color: string; bg: string; border: string; dot: string }> = {
@@ -186,20 +200,39 @@ function confidenceLabel(confidence: number) {
   return "Developing";
 }
 
+function formatScopeLabel(scopeMode: ScopeMode, scopeCenter: ScopeCenter | null, radiusKm: number) {
+  if (scopeMode === "all") return "All areas";
+  if (!scopeCenter) return "Locating nearby forecasts...";
+  const baseLabel = scopeMode === "custom" ? "Custom area" : "Nearby area";
+  return `${baseLabel} · ${scopeCenter.label} · ${radiusKm} km radius`;
+}
+
+function isWithinScope(
+  latitude: number,
+  longitude: number,
+  scopeMode: ScopeMode,
+  scopeCenter: ScopeCenter | null,
+  radiusKm: number,
+) {
+  if (scopeMode === "all") return true;
+  if (!scopeCenter) return false;
+  return haversine(latitude, longitude, scopeCenter.latitude, scopeCenter.longitude) <= radiusKm;
+}
+
 function categoryLabel(category: PredictionCategory) {
   switch (category) {
     case "emerging_hotspot":
       return "Emerging hotspot";
-    case "escalation_risk":
-      return "Escalation risk";
-    case "time_based_danger":
-      return "Time-based danger";
+    case "escalating_zone":
+      return "Escalating zone";
+    case "nighttime_risk":
+      return "Night-time risk";
     case "route_instability":
       return "Route instability";
-    case "unusual_activity":
-      return "Unusual activity";
-    case "spillover_risk":
-      return "Incident spillover";
+    case "unusual_activity_spike":
+      return "Unusual activity spike";
+    case "risk_spillover":
+      return "Risk spillover";
   }
 }
 
@@ -207,15 +240,15 @@ function predictionSummary(category: PredictionCategory, clusterName: string, wi
   switch (category) {
     case "emerging_hotspot":
       return `Elevated probability of rising activity around ${clusterName} within ${window}.`;
-    case "escalation_risk":
-      return `Signals suggest danger levels may intensify near ${clusterName} within ${window}.`;
-    case "time_based_danger":
-      return `Night-time exposure is increasing around ${clusterName} over the next ${window}.`;
+    case "escalating_zone":
+      return `Incident severity and activity are escalating around ${clusterName} within ${window}.`;
+    case "nighttime_risk":
+      return `Night-time incident patterns are strengthening around ${clusterName} over the next ${window}.`;
     case "route_instability":
       return `This corridor shows instability patterns that may worsen within ${window}.`;
-    case "unusual_activity":
-      return `Anomalous incident activity has appeared near ${clusterName} and merits monitoring.`;
-    case "spillover_risk":
+    case "unusual_activity_spike":
+      return `A sudden activity spike has appeared near ${clusterName} and merits monitoring.`;
+    case "risk_spillover":
       return `Risk may spread from nearby active zones toward ${clusterName} within ${window}.`;
   }
 }
@@ -261,7 +294,7 @@ function findNearestZone(
   incident: MapIncidentPoint,
   watchZones: WatchZonePoint[],
   maxDistanceKm: number,
-) {
+): NearestZoneMatch | null {
   let best: WatchZonePoint | null = null;
   let minDistance = Infinity;
 
@@ -273,7 +306,7 @@ function findNearestZone(
     }
   });
 
-  if (!best || minDistance > maxDistanceKm) return null;
+  if (best === null || minDistance > maxDistanceKm) return null;
   return { zone: best, distanceKm: minDistance };
 }
 
@@ -342,20 +375,22 @@ function buildPredictions(incidents: MapIncidentPoint[], watchZones: WatchZonePo
       const growth = recent.length / Math.max(previous.length, 1);
       const zoneSupport = (cluster.anchorZone?.riskScore ?? 0) / 100;
 
+      const escalationSignal =
+        recent.length > 0 ? (highSeverityCount / recent.length) * 18 + growth * 10 + activeReports * 4 : 0;
       const hotspotScore = recent.length * 8 + shortTerm.length * 5 + growth * 8;
-      const escalationScore = highSeverityCount * 9 + activeReports * 6 + zoneSupport * 18;
-      const timeScore = nightShare * 26 + (shortTerm.length >= 2 ? 10 : 0);
+      const escalationScore = highSeverityCount * 8 + escalationSignal + zoneSupport * 18;
+      const timeScore = nightShare * 26 + (shortTerm.length >= 2 ? 10 : 0) + activeReports * 2;
       const routeScore = routeSignal * 24 + (cluster.routeTaggedCount >= 3 ? 12 : 0);
       const unusualScore = anomalySignal * 28;
       const spilloverScore = zoneSupport * 16 + (growth > 1.4 ? 10 : 0);
 
       const categoryScores: Array<[PredictionCategory, number]> = [
         ["emerging_hotspot", hotspotScore],
-        ["escalation_risk", escalationScore],
-        ["time_based_danger", timeScore],
+        ["escalating_zone", escalationScore],
+        ["nighttime_risk", timeScore],
         ["route_instability", routeScore],
-        ["unusual_activity", unusualScore],
-        ["spillover_risk", spilloverScore],
+        ["unusual_activity_spike", unusualScore],
+        ["risk_spillover", spilloverScore],
       ];
 
       const [category, topCategoryScore] = categoryScores.sort((left, right) => right[1] - left[1])[0];
@@ -419,11 +454,11 @@ function buildPredictions(incidents: MapIncidentPoint[], watchZones: WatchZonePo
         summary: predictionSummary(category, cluster.name, window),
         rationale,
         timingNote:
-          category === "time_based_danger"
+          category === "nighttime_risk"
             ? "Recent activity is clustering after dark. Evening movement should be monitored more closely."
             : category === "route_instability"
               ? "Repeated route-linked reporting suggests corridor conditions may degrade further."
-              : "This is a probability-based forecast, not a claim of confirmed adversary presence.",
+              : "This is a risk forecast based on patterns, not a claim of confirmed adversary presence.",
         sourceCount: cluster.incidents.length,
         recentCount: recent.length,
         previousCount: previous.length,
@@ -479,7 +514,7 @@ function Sidebar({
       >
         <div className="px-6 py-7">
           <h1 className="text-xl font-bold tracking-tight text-cyan-400">GeoPulse AI</h1>
-          <p className="mt-1 text-[10px] uppercase tracking-widest text-white/35">Forward-Looking Intelligence</p>
+          <p className="mt-1 text-[10px] uppercase tracking-widest text-white/35">Pattern Risk Forecasting</p>
         </div>
         <nav className="flex-1 space-y-0.5 px-3">
           {NAV_ITEMS.map((item, index) => (
@@ -607,6 +642,123 @@ function PredictionCard({
   );
 }
 
+function LocationScopeControls({
+  scopeMode,
+  scopeCenter,
+  scopeRadiusKm,
+  customLatitude,
+  customLongitude,
+  scopeMessage,
+  isLocatingUser,
+  onUseNearby,
+  onShowAll,
+  onCustomLatitudeChange,
+  onCustomLongitudeChange,
+  onApplyCustomScope,
+  onRadiusChange,
+}: {
+  scopeMode: ScopeMode;
+  scopeCenter: ScopeCenter | null;
+  scopeRadiusKm: number;
+  customLatitude: string;
+  customLongitude: string;
+  scopeMessage: string;
+  isLocatingUser: boolean;
+  onUseNearby: () => void;
+  onShowAll: () => void;
+  onCustomLatitudeChange: (value: string) => void;
+  onCustomLongitudeChange: (value: string) => void;
+  onApplyCustomScope: () => void;
+  onRadiusChange: (value: number) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-white/35">Location scope</p>
+          <p className="mt-1 text-sm font-semibold text-white">{formatScopeLabel(scopeMode, scopeCenter, scopeRadiusKm)}</p>
+        </div>
+        <span className="rounded-full border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-widest text-white/45">
+          {scopeMode === "all" ? "Global" : `${scopeRadiusKm} km`}
+        </span>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-white/50">{scopeMessage}</p>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onUseNearby}
+          className={`rounded-xl border px-3 py-2.5 text-xs font-semibold uppercase tracking-widest transition ${
+            scopeMode === "nearby"
+              ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-300"
+              : "border-white/[0.08] bg-[#060B16] text-white/45 hover:text-white/70"
+          }`}
+        >
+          {isLocatingUser ? "Locating..." : "Use my location"}
+        </button>
+        <button
+          type="button"
+          onClick={onShowAll}
+          className={`rounded-xl border px-3 py-2.5 text-xs font-semibold uppercase tracking-widest transition ${
+            scopeMode === "all"
+              ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-300"
+              : "border-white/[0.08] bg-[#060B16] text-white/45 hover:text-white/70"
+          }`}
+        >
+          Show all areas
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.0001"
+          value={customLatitude}
+          onChange={(event) => onCustomLatitudeChange(event.target.value)}
+          placeholder="Latitude"
+          className="rounded-xl border border-white/[0.08] bg-[#060B16] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/50"
+        />
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.0001"
+          value={customLongitude}
+          onChange={(event) => onCustomLongitudeChange(event.target.value)}
+          placeholder="Longitude"
+          className="rounded-xl border border-white/[0.08] bg-[#060B16] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/50"
+        />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onApplyCustomScope}
+          className="rounded-xl border border-white/[0.08] bg-[#060B16] px-3 py-2.5 text-xs font-semibold uppercase tracking-widest text-white/65 transition hover:text-white"
+        >
+          Apply custom area
+        </button>
+        <span className="text-[11px] text-white/35">Set a manual forecast center when needed.</span>
+      </div>
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] uppercase tracking-widest text-white/35">Radius</p>
+          <span className="text-xs text-white/45">{scopeRadiusKm} km</span>
+        </div>
+        <input
+          type="range"
+          min={10}
+          max={150}
+          step={10}
+          value={scopeRadiusKm}
+          onChange={(event) => onRadiusChange(Number(event.target.value))}
+          className="mt-3 w-full accent-cyan-400"
+        />
+      </div>
+    </div>
+  );
+}
+
 function PanelContent({
   activeTab,
   predictions,
@@ -648,23 +800,23 @@ function PanelContent({
     return (
       <div className="space-y-4 p-4">
         <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/5 p-4">
-          <p className="text-[10px] uppercase tracking-widest text-cyan-300">Prediction posture</p>
+          <p className="text-[10px] uppercase tracking-widest text-cyan-300">Forecasting posture</p>
           <p className="mt-2 text-sm leading-6 text-white/70">
-            These forecasts are conservative probability estimates based on recent reporting, route-linked pressure,
-            clustering, and watch-zone context. They indicate rising risk patterns, not confirmed actor intent.
+            These forecasts are conservative probability estimates based on frequency, clustering, timing,
+            escalation, route instability, and watch-zone context. They indicate rising risk patterns, not confirmed actor intent.
           </p>
         </div>
 
         <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
           <div className="flex items-center justify-between">
             <p className="text-[10px] uppercase tracking-widest text-white/35">Layer controls</p>
-            <span className="text-[10px] text-white/30">{predictions.length} predictions</span>
+            <span className="text-[10px] text-white/30">{predictions.length} forecasts</span>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2">
             {[
               { label: "Incidents", active: showIncidents, onClick: onToggleIncidents },
               { label: "Heatmap", active: showHeatmap, onClick: onToggleHeatmap },
-              { label: "Predictions", active: showPredictions, onClick: onTogglePredictions },
+              { label: "Forecasts", active: showPredictions, onClick: onTogglePredictions },
             ].map((item) => (
               <button
                 key={item.label}
@@ -697,19 +849,19 @@ function PanelContent({
             className="mt-3 w-full accent-cyan-400"
           />
           <div className="mt-3">
-            <p className="mb-2 text-[10px] uppercase tracking-widest text-white/35">Prediction type</p>
+            <p className="mb-2 text-[10px] uppercase tracking-widest text-white/35">Forecast type</p>
             <select
               value={selectedCategory}
               onChange={(event) => onCategoryChange(event.target.value as PredictionCategory | "all")}
               className="w-full rounded-xl border border-white/[0.08] bg-[#060B16] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/50"
             >
-              <option value="all">All predictions</option>
+              <option value="all">All forecasts</option>
               <option value="emerging_hotspot">Emerging hotspots</option>
-              <option value="escalation_risk">Escalation risk</option>
-              <option value="time_based_danger">Time-based danger</option>
+              <option value="escalating_zone">Escalating zones</option>
+              <option value="nighttime_risk">Night-time risk</option>
               <option value="route_instability">Route instability</option>
-              <option value="unusual_activity">Unusual activity</option>
-              <option value="spillover_risk">Incident spillover</option>
+              <option value="unusual_activity_spike">Unusual activity spikes</option>
+              <option value="risk_spillover">Risk spillover</option>
             </select>
           </div>
         </div>
@@ -744,7 +896,7 @@ function PanelContent({
       <div className="space-y-3 p-4">
         {predictions.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-white/[0.08] p-5 text-center text-sm text-white/35">
-            No conservative prediction signals met the current filter.
+            No conservative risk forecasts met the current filter.
           </div>
         ) : null}
         {predictions.map((prediction) => (
@@ -803,39 +955,128 @@ export default function AIPredictionsPage() {
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
   );
   const [incidents, setIncidents] = useState<IncidentRecord[]>([]);
-  const [watchZones, setWatchZones] = useState<WatchZoneRecord[]>([]);
+  const [predictions, setPredictions] = useState<PredictionRecord[]>([]);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [loading, setLoading] = useState(Boolean(authToken));
+  const [scopeMode, setScopeMode] = useState<ScopeMode>("nearby");
+  const [scopeCenter, setScopeCenter] = useState<ScopeCenter | null>(null);
+  const [scopeRadiusKm, setScopeRadiusKm] = useState(DEFAULT_SCOPE_RADIUS_KM);
+  const [scopeMessage, setScopeMessage] = useState("Forecasts will load from your nearby area once location is available.");
+  const [isLocatingUser, setIsLocatingUser] = useState(false);
+  const [customLatitude, setCustomLatitude] = useState("");
+  const [customLongitude, setCustomLongitude] = useState("");
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
   }, []);
 
+  const requestNearbyScope = useCallback(
+    (fallbackToAll: boolean) => {
+      if (typeof window === "undefined" || !navigator.geolocation) {
+        if (fallbackToAll) {
+          setScopeMode("all");
+          setScopeMessage("Location access is unavailable on this device, so forecasts are showing all areas.");
+        } else {
+          setScopeMessage("Location access is unavailable on this device.");
+        }
+        return;
+      }
+
+      setIsLocatingUser(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const nextCenter = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            label: `${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`,
+          };
+          setScopeCenter(nextCenter);
+          setCustomLatitude(String(position.coords.latitude.toFixed(5)));
+          setCustomLongitude(String(position.coords.longitude.toFixed(5)));
+          setScopeMode("nearby");
+          setScopeMessage("Showing risk forecasts near your current location. You can expand or override this area anytime.");
+          setIsLocatingUser(false);
+        },
+        () => {
+          setIsLocatingUser(false);
+          if (fallbackToAll) {
+            setScopeMode("all");
+            setScopeMessage("Unable to confirm your current location, so forecasts are showing all areas for now.");
+          } else {
+            setScopeMessage("Unable to update your current location. You can keep the existing scope or set custom coordinates.");
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000,
+        },
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    requestNearbyScope(true);
+  }, [requestNearbyScope]);
+
   useEffect(() => {
     if (!authToken) return;
+    if (scopeMode !== "all" && scopeCenter === null) return;
     let active = true;
     const headers = { Authorization: `Token ${authToken}` };
 
     async function load() {
       setLoading(true);
       try {
-        const [incidentRes, watchZoneRes, alertRes] = await Promise.all([
+        const forecastUrl = new URL(`${API_BASE_URL}/risk-forecasts/`);
+        if (scopeMode !== "all" && scopeCenter) {
+          forecastUrl.searchParams.set("latitude", String(scopeCenter.latitude));
+          forecastUrl.searchParams.set("longitude", String(scopeCenter.longitude));
+          forecastUrl.searchParams.set("radius_km", String(scopeRadiusKm));
+        }
+        const [incidentRes, forecastRes, alertRes] = await Promise.all([
           fetch(`${API_BASE_URL}/incidents/`, { headers }),
-          fetch(`${API_BASE_URL}/watch-zones/`, { headers }),
+          fetch(forecastUrl.toString(), { headers }),
           fetch(`${API_BASE_URL}/alerts/`, { headers }),
         ]);
 
         if (!active) return;
 
-        const [incidentData, watchZoneData, alertData] = await Promise.all([
+        const [incidentData, forecastData, alertData] = await Promise.all([
           incidentRes.json(),
-          watchZoneRes.json(),
+          forecastRes.json(),
           alertRes.json(),
         ]);
 
         if (incidentRes.ok) setIncidents(getList(incidentData));
-        if (watchZoneRes.ok) setWatchZones(getList(watchZoneData));
+        if (forecastRes.ok) {
+          setPredictions(
+            getList(forecastData as ApiListResponse<Record<string, unknown>>).map((forecast) => ({
+              id: String(forecast.id ?? ""),
+              clusterName: String(forecast.cluster_name ?? ""),
+              category: String(forecast.category ?? "emerging_hotspot") as PredictionCategory,
+              level: String(forecast.level ?? "low") as RiskLevel,
+              probability: Number(forecast.probability ?? 0),
+              confidence: Number(forecast.confidence ?? 0),
+              window: String(forecast.window ?? "7d") as PredictionWindow,
+              latitude: Number(forecast.latitude ?? 0),
+              longitude: Number(forecast.longitude ?? 0),
+              summary: String(forecast.summary ?? ""),
+              rationale: Array.isArray(forecast.rationale) ? forecast.rationale.map((item) => String(item)) : [],
+              timingNote: String(forecast.timing_note ?? ""),
+              sourceCount: Number(forecast.source_count ?? 0),
+              recentCount: Number(forecast.recent_count ?? 0),
+              previousCount: Number(forecast.previous_count ?? 0),
+              activeReports: Number(forecast.active_reports ?? 0),
+              highSeverityCount: Number(forecast.high_severity_count ?? 0),
+              nightShare: Number(forecast.night_share ?? 0),
+              routeSignal: Number(forecast.route_signal ?? 0),
+              anomalySignal: Number(forecast.anomaly_signal ?? 0),
+            })),
+          );
+        }
         if (alertRes.ok) {
           setAlerts(
             getList(alertData as ApiListResponse<Record<string, unknown>>).map((alert, index) => ({
@@ -862,7 +1103,7 @@ export default function AIPredictionsPage() {
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [authToken]);
+  }, [authToken, scopeCenter, scopeMode, scopeRadiusKm]);
 
   const incidentPoints = useMemo(
     () =>
@@ -889,27 +1130,13 @@ export default function AIPredictionsPage() {
     [incidents],
   );
 
-  const watchZonePoints = useMemo(
+  const scopedIncidentPoints = useMemo(
     () =>
-      watchZones.flatMap((zone) => {
-        const latitude = toNumber(zone.centroid_latitude);
-        const longitude = toNumber(zone.centroid_longitude);
-        if (latitude === null || longitude === null) return [];
-        return [
-          {
-            id: zone.id,
-            name: zone.name,
-            riskLevel: zone.current_risk_level,
-            riskScore: toNumber(zone.current_risk_score) ?? 0,
-            latitude,
-            longitude,
-          },
-        ];
-      }),
-    [watchZones],
+      incidentPoints.filter((incident) =>
+        isWithinScope(incident.latitude, incident.longitude, scopeMode, scopeCenter, scopeRadiusKm),
+      ),
+    [incidentPoints, scopeCenter, scopeMode, scopeRadiusKm],
   );
-
-  const predictions = useMemo(() => buildPredictions(incidentPoints, watchZonePoints), [incidentPoints, watchZonePoints]);
 
   const filteredPredictions = useMemo(
     () =>
@@ -945,10 +1172,16 @@ export default function AIPredictionsPage() {
         longitude: focusedPrediction.longitude,
         label: `${focusedPrediction.clusterName} forecast`,
       }
+    : scopeCenter
+      ? {
+          latitude: scopeCenter.latitude,
+          longitude: scopeCenter.longitude,
+          label: scopeCenter.label,
+        }
     : null;
 
-  const dailySeries = useMemo(() => buildDailySeries(incidentPoints, 7), [incidentPoints]);
-  const hourlySeries = useMemo(() => buildHourlyRiskSeries(incidentPoints), [incidentPoints]);
+  const dailySeries = useMemo(() => buildDailySeries(scopedIncidentPoints, 7), [scopedIncidentPoints]);
+  const hourlySeries = useMemo(() => buildHourlyRiskSeries(scopedIncidentPoints), [scopedIncidentPoints]);
 
   const topPrediction = filteredPredictions[0] ?? null;
   const criticalForecasts = filteredPredictions.filter(
@@ -957,7 +1190,24 @@ export default function AIPredictionsPage() {
   const avgConfidence = filteredPredictions.length
     ? Math.round(filteredPredictions.reduce((sum, prediction) => sum + prediction.confidence, 0) / filteredPredictions.length)
     : 0;
-  const recentEscalations = filteredPredictions.filter((prediction) => prediction.category === "escalation_risk").length;
+  const recentEscalations = filteredPredictions.filter((prediction) => prediction.category === "escalating_zone").length;
+
+  const applyCustomScope = useCallback(() => {
+    const latitude = Number(customLatitude);
+    const longitude = Number(customLongitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      setScopeMessage("Enter valid latitude and longitude values before applying a custom forecast area.");
+      return;
+    }
+
+    setScopeCenter({
+      latitude,
+      longitude,
+      label: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+    });
+    setScopeMode("custom");
+    setScopeMessage("Showing forecasts for your custom location filter.");
+  }, [customLatitude, customLongitude]);
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem("geopulse.token");
@@ -977,7 +1227,7 @@ export default function AIPredictionsPage() {
 
   const tabs: Array<{ id: PanelTab; label: string }> = [
     { id: "overview", label: "Overview" },
-    { id: "feed", label: `Prediction Feed ${filteredPredictions.length ? `(${filteredPredictions.length})` : ""}` },
+    { id: "feed", label: `Forecast Feed ${filteredPredictions.length ? `(${filteredPredictions.length})` : ""}` },
     { id: "trends", label: "Trend Charts" },
   ];
 
@@ -998,10 +1248,10 @@ export default function AIPredictionsPage() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/8 px-3 py-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
-              <span className="text-[10px] uppercase tracking-widest text-cyan-400">AI Predictions</span>
+              <span className="text-[10px] uppercase tracking-widest text-cyan-400">Risk Forecasting</span>
             </div>
             <span className="text-sm text-white/40">
-              {topPrediction ? topPrediction.summary : "Conservative forecasting for emerging risk patterns"}
+              {topPrediction ? topPrediction.summary : formatScopeLabel(scopeMode, scopeCenter, scopeRadiusKm)}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -1024,7 +1274,7 @@ export default function AIPredictionsPage() {
               zoom={6}
               mapStyle="mapbox://styles/mapbox/dark-v11"
               exactPin={exactPin}
-              incidents={incidentPoints}
+              incidents={scopedIncidentPoints}
               watchZones={predictionZones}
               showControlsUi={false}
               showIncidents={showIncidents}
@@ -1044,12 +1294,33 @@ export default function AIPredictionsPage() {
               <MetricCard
                 label="Avg Confidence"
                 value={`${avgConfidence}%`}
-                subtext="Probability backed by reporting density"
+                subtext="Forecast confidence from reporting density"
               />
               <MetricCard
                 label="Escalation Signals"
                 value={String(recentEscalations)}
                 subtext="Clusters with rising severity pressure"
+              />
+            </div>
+
+            <div className="shrink-0 border-b border-white/[0.06] p-4">
+              <LocationScopeControls
+                scopeMode={scopeMode}
+                scopeCenter={scopeCenter}
+                scopeRadiusKm={scopeRadiusKm}
+                customLatitude={customLatitude}
+                customLongitude={customLongitude}
+                scopeMessage={scopeMessage}
+                isLocatingUser={isLocatingUser}
+                onUseNearby={() => requestNearbyScope(false)}
+                onShowAll={() => {
+                  setScopeMode("all");
+                  setScopeMessage("Showing risk forecasts across all available areas.");
+                }}
+                onCustomLatitudeChange={setCustomLatitude}
+                onCustomLongitudeChange={setCustomLongitude}
+                onApplyCustomScope={applyCustomScope}
+                onRadiusChange={setScopeRadiusKm}
               />
             </div>
 
@@ -1106,9 +1377,9 @@ export default function AIPredictionsPage() {
               <MenuIcon />
             </button>
             <div>
-              <p className="text-sm font-semibold text-white">AI Predictions</p>
+              <p className="text-sm font-semibold text-white">Risk Forecasting</p>
               <p className="text-[10px] uppercase tracking-widest text-white/35">
-                {topPrediction ? `${topPrediction.probability}% forecast probability` : "No active forecast"}
+                {topPrediction ? `${topPrediction.probability}% risk forecast probability` : "No active forecast"}
               </p>
             </div>
           </div>
@@ -1121,7 +1392,7 @@ export default function AIPredictionsPage() {
             zoom={5}
             mapStyle="mapbox://styles/mapbox/dark-v11"
             exactPin={exactPin}
-            incidents={incidentPoints}
+            incidents={scopedIncidentPoints}
             watchZones={predictionZones}
             showControlsUi={false}
             showIncidents={showIncidents}
@@ -1132,6 +1403,25 @@ export default function AIPredictionsPage() {
         </div>
 
         <div className="space-y-4 px-4 py-4">
+          <LocationScopeControls
+            scopeMode={scopeMode}
+            scopeCenter={scopeCenter}
+            scopeRadiusKm={scopeRadiusKm}
+            customLatitude={customLatitude}
+            customLongitude={customLongitude}
+            scopeMessage={scopeMessage}
+            isLocatingUser={isLocatingUser}
+            onUseNearby={() => requestNearbyScope(false)}
+            onShowAll={() => {
+              setScopeMode("all");
+              setScopeMessage("Showing risk forecasts across all available areas.");
+            }}
+            onCustomLatitudeChange={setCustomLatitude}
+            onCustomLongitudeChange={setCustomLongitude}
+            onApplyCustomScope={applyCustomScope}
+            onRadiusChange={setScopeRadiusKm}
+          />
+
           <div className="grid grid-cols-3 gap-2">
             <MetricCard
               label="Forecast Zones"

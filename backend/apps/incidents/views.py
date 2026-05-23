@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from apps.audit_logs.services import record_audit_event
 from apps.users.permissions import IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import is_analyst_or_admin
 
 from .models import Incident, Pattern, SignalCluster
 from .serializers import IncidentSerializer, PatternSerializer, SignalClusterSerializer
@@ -110,6 +111,9 @@ class IncidentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(severity=severity)
         if confidence:
             queryset = queryset.filter(confidence=confidence)
+
+        if not is_analyst_or_admin(self.request.user):
+            queryset = queryset.filter(confidence__in=["corroborated", "high"]).exclude(status="dismissed")
 
         return queryset
 

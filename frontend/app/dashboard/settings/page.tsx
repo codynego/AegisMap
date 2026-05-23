@@ -1,20 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
-import { getCurrentRole } from "@/lib/access";
-import InternalDroneIntelligencePage from "../../internal/drone-intelligence/page";
 
-export default function DashboardDroneRedirectPage() {
+import { getCurrentRole } from "@/lib/access";
+import InternalSettingsPage from "../../internal/settings/page";
+
+export default function DashboardSettingsPage() {
   const role = getCurrentRole();
 
   useEffect(() => {
     if (role !== "analyst" && role !== "admin") {
-      window.location.replace("/dashboard/profile");
+      window.location.replace("/dashboard");
     }
   }, [role]);
 
   if (role === "analyst" || role === "admin") {
-    return <InternalDroneIntelligencePage />;
+    return <InternalSettingsPage />;
   }
 
   return null;

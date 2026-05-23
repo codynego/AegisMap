@@ -36,6 +36,20 @@ type SignalRecord = {
   metadata: Record<string, unknown>;
   evidence_items: SignalEvidenceRecord[];
   duplicate_of?: string | null;
+  confidence_score?: number | null;
+  verification_summary?: VerificationSummary | null;
+};
+
+type VerificationSummary = {
+  total_votes?: number;
+  confirm_count?: number;
+  deny_count?: number;
+  unsure_count?: number;
+  confirm_weight?: number;
+  deny_weight?: number;
+  unsure_weight?: number;
+  trusted_confirmations?: number;
+  consensus_ratio?: number | null;
 };
 
 type SourceProfileRecord = {
@@ -67,12 +81,13 @@ const API_BASE_URL =
   "http://127.0.0.1:8000/api";
 
 const NAV_ITEMS = [
-  { label: "Dashboard", icon: "⬡", path: "/internal" },
-  { label: "Live Intelligence", icon: "◎", path: "/internal/live-intelligence" },
-  { label: "Incident Reports", icon: "◈", path: "/internal/incident-reports" },
-  { label: "Route Intelligence", icon: "◍", path: "/internal/route-intelligence" },
-  { label: "AI Predictions", icon: "◈", path: "/internal/ai-predictions" },
-  { label: "Drone Intelligence", icon: "◉", path: "/internal/drone-intelligence" },
+  { label: "Dashboard", icon: "⬡", path: "/dashboard" },
+  { label: "Live Intelligence", icon: "◎", path: "/dashboard/live-intelligence" },
+  { label: "Incident Reports", icon: "◈", path: "/dashboard/incident-reports" },
+  { label: "Route Intelligence", icon: "◍", path: "/dashboard/route-intelligence" },
+  { label: "Analytics", icon: "◈", path: "/dashboard/analytics" },
+  { label: "Drone Intelligence", icon: "◉", path: "/dashboard/drone-intelligence" },
+  { label: "Settings", icon: "◌", path: "/dashboard/settings" },
 ];
 
 const STATUS_OPTIONS = ["all", "raw", "triaged", "clustered", "escalated", "dismissed"] as const;
@@ -98,6 +113,35 @@ function relativeTime(value?: string | null) {
 
 function formatEnum(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatConfidenceScore(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "N/A";
+  return `${Math.round(value)}%`;
+}
+
+function confidenceBand(score?: number | null) {
+  if (typeof score !== "number") return "Unknown";
+  if (score <= 30) return "Unconfirmed";
+  if (score <= 60) return "Visible Internal Marker";
+  if (score <= 80) return "Probable Incident";
+  return "High-Confidence Alert";
+}
+
+function consensusTone(score?: number | null) {
+  if (typeof score !== "number") return "border-white/[0.08] bg-white/[0.03] text-white/50";
+  if (score <= 30) return "border-white/[0.08] bg-white/[0.03] text-white/50";
+  if (score <= 60) return "border-cyan-500/20 bg-cyan-500/10 text-cyan-300";
+  if (score <= 80) return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+}
+
+function progressTone(score?: number | null) {
+  if (typeof score !== "number") return "bg-white/30";
+  if (score <= 30) return "bg-white/40";
+  if (score <= 60) return "bg-cyan-400";
+  if (score <= 80) return "bg-amber-400";
+  return "bg-emerald-400";
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -360,6 +404,63 @@ function ActionButton({
   );
 }
 
+function ConfidencePanel({ signal }: { signal: SignalRecord }) {
+  const score = signal.confidence_score;
+  const summary = signal.verification_summary ?? {};
+  const totalVotes = summary.total_votes ?? 0;
+  const consensusPercent =
+    typeof summary.consensus_ratio === "number" ? Math.round(summary.consensus_ratio * 100) : null;
+
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="font-mono-ui text-[9px] uppercase tracking-[0.2em] text-cyan-400">Weighted Consensus</p>
+          <div className="mt-2 flex items-center gap-3">
+            <span className="text-3xl font-bold tracking-[-0.03em] text-white">{formatConfidenceScore(score)}</span>
+            <span className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] ${consensusTone(score)}`}>
+              {confidenceBand(score)}
+            </span>
+          </div>
+          <p className="mt-2 text-sm text-white/40">
+            Confidence updates automatically as trust-weighted verification comes in.
+          </p>
+        </div>
+
+        <div className="grid min-w-[220px] grid-cols-2 gap-2">
+          <DetailMetaCard label="Votes" value={String(totalVotes)} />
+          <DetailMetaCard label="Trusted Confirms" value={String(summary.trusted_confirmations ?? 0)} />
+          <DetailMetaCard label="Confirm Weight" value={String(summary.confirm_weight ?? 0)} />
+          <DetailMetaCard label="Deny Weight" value={String(summary.deny_weight ?? 0)} />
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-2 flex items-center justify-between text-[11px] text-white/35">
+          <span>Confidence Progress</span>
+          <span>{formatConfidenceScore(score)}</span>
+        </div>
+        <div className="h-2 rounded-full bg-white/[0.06]">
+          <div
+            className={`h-2 rounded-full transition-all ${progressTone(score)}`}
+            style={{ width: `${Math.max(0, Math.min(score ?? 0, 100))}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-4">
+        <DetailMetaCard label="Confirmations" value={String(summary.confirm_count ?? 0)} />
+        <DetailMetaCard label="Denials" value={String(summary.deny_count ?? 0)} />
+        <DetailMetaCard label="Not Sure" value={String(summary.unsure_count ?? 0)} />
+        <DetailMetaCard
+          label="Consensus"
+          value={consensusPercent === null ? "No decisive vote" : `${consensusPercent}% confirm`}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function IncidentReportsPage() {
@@ -390,13 +491,35 @@ export default function IncidentReportsPage() {
     return () => cancelAnimationFrame(frame);
   }, []);
 
+  async function refreshData() {
+    if (!authToken) return;
+    const headers = { Authorization: `Token ${authToken}` };
+    setLoading(true);
+    try {
+      const [signalRes, sourceRes, incidentRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/signals/`, { headers }),
+        fetch(`${API_BASE_URL}/source-profiles/`, { headers }),
+        fetch(`${API_BASE_URL}/incidents/`, { headers }),
+      ]);
+      const [signalData, sourceData, incidentData] = await Promise.all([
+        signalRes.json(),
+        sourceRes.json(),
+        incidentRes.json(),
+      ]);
+      if (signalRes.ok) setSignals(getList(signalData));
+      if (sourceRes.ok) setSources(getList(sourceData));
+      if (incidentRes.ok) setIncidents(getList(incidentData));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!authToken) return;
     let active = true;
     const headers = { Authorization: `Token ${authToken}` };
 
-    async function loadData() {
-      setLoading(true);
+    async function loadInitialData() {
       try {
         const [signalRes, sourceRes, incidentRes] = await Promise.all([
           fetch(`${API_BASE_URL}/signals/`, { headers }),
@@ -409,6 +532,7 @@ export default function IncidentReportsPage() {
           sourceRes.json(),
           incidentRes.json(),
         ]);
+        if (!active) return;
         if (signalRes.ok) setSignals(getList(signalData));
         if (sourceRes.ok) setSources(getList(sourceData));
         if (incidentRes.ok) setIncidents(getList(incidentData));
@@ -417,8 +541,10 @@ export default function IncidentReportsPage() {
       }
     }
 
-    void loadData();
-    return () => { active = false; };
+    void loadInitialData();
+    return () => {
+      active = false;
+    };
   }, [authToken]);
 
   const sourceMap = useMemo(
@@ -472,8 +598,8 @@ export default function IncidentReportsPage() {
 
   async function runSignalAction(
     signalId: string,
-    action: "verify" | "reject" | "escalate" | "merge_duplicate",
-    body?: Record<string, string>,
+    action: "submit_verification" | "reject" | "escalate" | "merge_duplicate",
+    body?: Record<string, string | number>,
   ) {
     if (!authToken) return;
     setSubmittingAction(action);
@@ -491,14 +617,24 @@ export default function IncidentReportsPage() {
       if (!response.ok) throw new Error(payload?.detail ?? "Action failed.");
 
       if (action === "merge_duplicate" && payload?.merged_signal) {
-        const m = payload.merged_signal as SignalRecord;
-        setSignals((cur) => cur.map((s) => (s.id === m.id ? m : s)));
+        const mergedSignal = payload.merged_signal as SignalRecord;
+        setSignals((cur) => cur.map((s) => (s.id === mergedSignal.id ? mergedSignal : s)));
+      } else if (action === "submit_verification" && payload?.signal) {
+        const updatedSignal = payload.signal as SignalRecord;
+        setSignals((cur) => cur.map((s) => (s.id === updatedSignal.id ? updatedSignal : s)));
       } else {
-        const u = payload as SignalRecord;
-        setSignals((cur) => cur.map((s) => (s.id === u.id ? u : s)));
+        const updatedSignal = payload as SignalRecord;
+        setSignals((cur) => cur.map((s) => (s.id === updatedSignal.id ? updatedSignal : s)));
       }
 
-      setActionMessage({ text: `${formatEnum(action.replace("_", " "))} completed successfully.`, type: "success" });
+      await refreshData();
+      setActionMessage({
+        text:
+          action === "submit_verification"
+            ? "Verification vote recorded and confidence updated."
+            : `${formatEnum(action.replace("_", " "))} completed successfully.`,
+        type: "success",
+      });
       if (action === "merge_duplicate") setMergeTargetId("");
     } catch (error) {
       setActionMessage({ text: error instanceof Error ? error.message : "Action failed.", type: "error" });
@@ -734,6 +870,9 @@ export default function IncidentReportsPage() {
                         <span className="rounded-full border border-white/[0.06] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35">
                           {formatEnum(selectedSignal.confidence)}
                         </span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] ${consensusTone(selectedSignal.confidence_score)}`}>
+                          {formatConfidenceScore(selectedSignal.confidence_score)}
+                        </span>
                       </div>
                     </div>
 
@@ -790,6 +929,8 @@ export default function IncidentReportsPage() {
                             <DetailMetaCard label="Linked Incident" value={linkedIncident?.title ?? "Not linked yet"} />
                           </div>
                         </div>
+
+                        <ConfidencePanel signal={selectedSignal} />
 
                         {/* Source profile */}
                         {selectedSource ? (
@@ -869,31 +1010,84 @@ export default function IncidentReportsPage() {
                         {/* Verification workflow */}
                         <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-4">
                           <p className="mb-1 font-mono-ui text-[9px] uppercase tracking-[0.2em] text-emerald-400">Verification Workflow</p>
-                          <p className="mb-4 text-xs text-white/35">Update this report&apos;s disposition to reflect your review decision.</p>
+                          <p className="mb-4 text-xs text-white/35">
+                            Cast a weighted consensus vote. Confidence updates automatically after each response.
+                          </p>
                           <div className="grid gap-2 sm:grid-cols-3">
+                            <ActionButton
+                              label="Yes, True"
+                              loadingLabel="Submitting..."
+                              isLoading={submittingAction === "submit_verification"}
+                              disabled={submittingAction !== null}
+                              colorClass="border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                              onClick={() => runSignalAction(selectedSignal.id, "submit_verification", { response: "confirm" })}
+                            />
+                            <ActionButton
+                              label="No, False"
+                              loadingLabel="Submitting..."
+                              isLoading={submittingAction === "submit_verification"}
+                              disabled={submittingAction !== null}
+                              colorClass="border border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                              onClick={() => runSignalAction(selectedSignal.id, "submit_verification", { response: "deny" })}
+                            />
+                            <ActionButton
+                              label="Not Sure"
+                              loadingLabel="Submitting..."
+                              isLoading={submittingAction === "submit_verification"}
+                              disabled={submittingAction !== null}
+                              colorClass="border border-white/[0.12] bg-white/[0.04] text-white/70 hover:bg-white/[0.08]"
+                              onClick={() => runSignalAction(selectedSignal.id, "submit_verification", { response: "unsure" })}
+                            />
+                          </div>
+                          <div className="hidden">
                             <ActionButton
                               label="✓ Verify"
                               loadingLabel="Verifying…"
-                              isLoading={submittingAction === "verify"}
+                              isLoading={submittingAction === "submit_verification"}
                               disabled={submittingAction !== null}
                               colorClass="border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                              onClick={() => runSignalAction(selectedSignal.id, "verify")}
+                              onClick={() => runSignalAction(selectedSignal.id, "submit_verification", { response: "confirm" })}
                             />
                             <ActionButton
                               label="✕ Reject"
                               loadingLabel="Rejecting…"
-                              isLoading={submittingAction === "reject"}
+                              isLoading={submittingAction === "submit_verification"}
                               disabled={submittingAction !== null}
                               colorClass="border border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-                              onClick={() => runSignalAction(selectedSignal.id, "reject")}
+                              onClick={() => runSignalAction(selectedSignal.id, "submit_verification", { response: "deny" })}
                             />
                             <ActionButton
                               label="⬆ Escalate"
                               loadingLabel="Escalating…"
+                              isLoading={submittingAction === "submit_verification"}
+                              disabled={submittingAction !== null}
+                              colorClass="border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                              onClick={() => runSignalAction(selectedSignal.id, "submit_verification", { response: "unsure" })}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-4">
+                          <p className="mb-1 font-mono-ui text-[9px] uppercase tracking-[0.2em] text-amber-400">Analyst Override</p>
+                          <p className="mb-4 text-xs text-white/35">
+                            Use manual override when the consensus is disputed or the situation needs immediate intervention.
+                          </p>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <ActionButton
+                              label="Escalate"
+                              loadingLabel="Escalating..."
                               isLoading={submittingAction === "escalate"}
                               disabled={submittingAction !== null}
                               colorClass="border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
                               onClick={() => runSignalAction(selectedSignal.id, "escalate")}
+                            />
+                            <ActionButton
+                              label="Reject"
+                              loadingLabel="Rejecting..."
+                              isLoading={submittingAction === "reject"}
+                              disabled={submittingAction !== null}
+                              colorClass="border border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                              onClick={() => runSignalAction(selectedSignal.id, "reject")}
                             />
                           </div>
                         </div>

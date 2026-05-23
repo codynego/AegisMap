@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -7,12 +8,20 @@ from rest_framework.response import Response
 from apps.audit_logs.services import record_audit_event
 from apps.users.permissions import AllowCreateAuthenticatedReadAnalystWrite
 from apps.users.permissions import IsAnalystOrAdmin
+from apps.users.permissions import can_submit_public_verification, get_user_role, is_analyst_or_admin, is_internal_user, is_trusted_reporter
+from apps.users.models import UserRole
 
 from .analytics import build_signal_analytics
 from .ingestion import process_ingestion_job
-from .models import Signal, SignalEvidence, SignalIngestionJob
-from .serializers import SignalEvidenceSerializer, SignalIngestionJobSerializer, SignalSerializer
-from .services import assess_signal, dispatch_signal_pipeline
+from .models import ConfidenceLevel, Signal, SignalEvidence, SignalIngestionJob, SignalStatus
+from .serializers import (
+    SignalEvidenceSerializer,
+    SignalIngestionJobSerializer,
+    SignalSerializer,
+    SignalVerificationSerializer,
+    SignalVerificationSubmitSerializer,
+)
+from .services import assess_signal, dispatch_signal_pipeline, submit_signal_verification
 
 
 class SignalViewSet(viewsets.ModelViewSet):
@@ -39,6 +48,8 @@ class SignalViewSet(viewsets.ModelViewSet):
             "merge_duplicate",
         }:
             permission_classes = [IsAnalystOrAdmin]
+        elif self.action == "submit_verification":
+            permission_classes = [IsAuthenticated]
         else:
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
@@ -48,6 +59,8 @@ class SignalViewSet(viewsets.ModelViewSet):
         category = self.request.query_params.get("category")
         confidence = self.request.query_params.get("confidence")
         status_value = self.request.query_params.get("status")
+        verification_queue = self.request.query_params.get("verification_queue") == "true"
+        user = self.request.user
 
         if category:
             queryset = queryset.filter(category=category)
@@ -56,7 +69,29 @@ class SignalViewSet(viewsets.ModelViewSet):
         if status_value:
             queryset = queryset.filter(status=status_value)
 
-        return queryset
+        if is_internal_user(user):
+            return queryset
+
+        if self.action == "submit_verification":
+            return queryset.exclude(status=SignalStatus.DISMISSED)
+
+        if verification_queue and is_trusted_reporter(user):
+            return queryset.filter(
+                confidence__in=[
+                    ConfidenceLevel.RAW,
+                    ConfidenceLevel.LOW,
+                    ConfidenceLevel.EMERGING,
+                    ConfidenceLevel.DISPUTED,
+                ],
+            ).exclude(status=SignalStatus.DISMISSED)
+
+        if can_submit_public_verification(user):
+            return queryset.filter(
+                Q(submitted_by=user)
+                | Q(confidence__in=[ConfidenceLevel.CORROBORATED, ConfidenceLevel.HIGH])
+            ).exclude(status=SignalStatus.DISMISSED)
+
+        return queryset.none()
 
     def perform_create(self, serializer):
         submitted_by = self.request.user if self.request.user.is_authenticated else None
@@ -210,6 +245,38 @@ class SignalViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=["post"])
+    def submit_verification(self, request, pk=None):
+        signal = self.get_object()
+        serializer = SignalVerificationSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        verification = submit_signal_verification(
+            signal=signal,
+            user=request.user,
+            response=serializer.validated_data["response"],
+            distance_meters=serializer.validated_data.get("distance_meters"),
+            note=serializer.validated_data.get("note", ""),
+        )
+        signal.refresh_from_db()
+        record_audit_event(
+            "signal.verification_submitted",
+            actor=request.user if request.user.is_authenticated else None,
+            obj=signal,
+            request=request,
+            description=f"Verification submitted for signal '{signal.title}'.",
+            metadata={
+                "response": verification.response,
+                "weight": float(verification.weight),
+            },
+        )
+        return Response(
+            {
+                "signal": self.get_serializer(signal).data,
+                "verification": SignalVerificationSerializer(verification).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class SignalEvidenceViewSet(viewsets.ModelViewSet):
     serializer_class = SignalEvidenceSerializer
@@ -247,7 +314,7 @@ class SignalIngestionJobViewSet(viewsets.ModelViewSet):
 
 
 class SignalAnalyticsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAnalystOrAdmin]
 
     @action(detail=False, methods=["get"])
     def overview(self, request):

@@ -3,11 +3,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.audit_logs.services import record_audit_event
-from apps.users.permissions import IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import IsAnalystOrAdmin, IsAuthenticatedReadAnalystWrite
 
 from .models import RiskSnapshot, WatchZone
-from .serializers import RiskSnapshotSerializer, WatchZoneSerializer
-from .services import evaluate_watch_zone
+from .serializers import RiskForecastSerializer, RiskSnapshotSerializer, WatchZoneSerializer
+from .services import _haversine, build_risk_forecasts, evaluate_watch_zone
 
 
 class WatchZoneViewSet(viewsets.ModelViewSet):
@@ -57,3 +57,50 @@ class RiskSnapshotViewSet(viewsets.ModelViewSet):
         if watch_zone_id:
             queryset = queryset.filter(watch_zone_id=watch_zone_id)
         return queryset
+
+
+class RiskForecastViewSet(viewsets.ViewSet):
+    permission_classes = [IsAnalystOrAdmin]
+
+    def list(self, request):
+        forecasts = build_risk_forecasts()
+        category = request.query_params.get("category")
+        min_confidence = request.query_params.get("min_confidence")
+        limit = request.query_params.get("limit")
+        latitude = request.query_params.get("latitude")
+        longitude = request.query_params.get("longitude")
+        radius_km = request.query_params.get("radius_km")
+
+        if category:
+            forecasts = [forecast for forecast in forecasts if forecast["category"] == category]
+        if min_confidence:
+            try:
+                threshold = int(min_confidence)
+                forecasts = [forecast for forecast in forecasts if forecast["confidence"] >= threshold]
+            except ValueError:
+                pass
+        if latitude and longitude:
+            try:
+                center_latitude = float(latitude)
+                center_longitude = float(longitude)
+                radius = max(1.0, float(radius_km or 50))
+                forecasts = [
+                    forecast
+                    for forecast in forecasts
+                    if _haversine(
+                        center_latitude,
+                        center_longitude,
+                        float(forecast["latitude"]),
+                        float(forecast["longitude"]),
+                    )
+                    <= radius
+                ]
+            except ValueError:
+                pass
+        if limit:
+            try:
+                forecasts = forecasts[: max(1, int(limit))]
+            except ValueError:
+                pass
+
+        return Response(RiskForecastSerializer(forecasts, many=True).data)

@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { getCurrentRole, type AppRole } from "@/lib/access";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -285,6 +287,8 @@ function StatBox({ label, value, tone = "neutral" }: { label: string; value: str
 export default function ProfilePage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [role, setRole] = useState<AppRole>("community_reporter");
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
   );
@@ -300,6 +304,20 @@ export default function ProfilePage() {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    setRole(getCurrentRole());
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("geopulse.token");
+    localStorage.removeItem("geopulse.user");
+    window.location.assign("/login");
+  }, []);
+
+  const handleNav = useCallback((path: string) => {
+    router.push(path);
+  }, [router]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -396,9 +414,26 @@ export default function ProfilePage() {
     <div className="min-h-screen bg-[#060B16] text-white antialiased">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_50%_at_0%_0%,rgba(6,182,212,0.05),transparent),radial-gradient(ellipse_60%_40%_at_100%_100%,rgba(255,82,82,0.04),transparent)]" />
 
+      <DashboardSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        activePath="/dashboard/profile"
+        onNavigate={handleNav}
+        onLogout={handleLogout}
+        role={role}
+      />
+
       <div className="lg:ml-64">
-        {/* Top bar */}
-        <header className="sticky top-0 z-30 flex h-14 items-center border-b border-white/[0.06] bg-[#060B16]/90 px-4 backdrop-blur-xl sm:px-6">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-[#060B16]/90 px-4 backdrop-blur-xl sm:px-6">
+          <button
+            aria-label="Open menu"
+            onClick={() => setSidebarOpen(true)}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] text-white/70 lg:hidden"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round">
+              <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
           <h1 className="text-sm font-semibold text-white">Profile</h1>
         </header>
 

@@ -8,6 +8,7 @@ from apps.alerts.models import Alert
 from apps.incidents.models import Incident, Pattern, SignalCluster
 from apps.risk.models import WatchZone
 from apps.signals.models import Signal
+from apps.users.permissions import IsAnalystOrAdmin
 
 
 class HealthCheckView(APIView):
@@ -18,7 +19,7 @@ class HealthCheckView(APIView):
 
 
 class DashboardSummaryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAnalystOrAdmin]
 
     def get(self, request):
         recent_signal_counts = (

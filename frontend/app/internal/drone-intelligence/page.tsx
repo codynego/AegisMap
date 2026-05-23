@@ -4,12 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const NAV_ITEMS = [
-  { label: "Dashboard", path: "/internal" },
-  { label: "Live Intelligence", path: "/internal/live-intelligence" },
-  { label: "Incident Reports", path: "/internal/incident-reports" },
-  { label: "Route Intelligence", path: "/internal/route-intelligence" },
-  { label: "AI Predictions", path: "/internal/ai-predictions" },
-  { label: "Drone Intelligence", path: "/internal/drone-intelligence" },
+  { label: "Dashboard", path: "/dashboard" },
+  { label: "Live Intelligence", path: "/dashboard/live-intelligence" },
+  { label: "Incident Reports", path: "/dashboard/incident-reports" },
+  { label: "Route Intelligence", path: "/dashboard/route-intelligence" },
+  { label: "Analytics", path: "/dashboard/analytics" },
+  { label: "Drone Intelligence", path: "/dashboard/drone-intelligence" },
+  { label: "Settings", path: "/dashboard/settings" },
 ];
 
 const STORAGE_KEY = "geopulse.drone-interest-subscribers";

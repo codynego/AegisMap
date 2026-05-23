@@ -26,6 +26,8 @@ SEVERITY_RANK = {
 }
 
 EARTH_METERS_PER_DEGREE = Decimal("111111")
+DUPLICATE_RADIUS_METERS = 250
+DUPLICATE_TIME_WINDOW_SECONDS = 45 * 60
 
 
 def _distance_within(signal_a: Signal, signal_b: Signal, radius_meters: int) -> bool:
@@ -42,6 +44,21 @@ def _distance_within(signal_a: Signal, signal_b: Signal, radius_meters: int) -> 
     return lat_delta <= radius_degrees and lon_delta <= radius_degrees
 
 
+def _time_delta_within(signal_a: Signal, signal_b: Signal, window_seconds: int) -> bool:
+    timestamp_a = signal_a.occurred_at or signal_a.received_at
+    timestamp_b = signal_b.occurred_at or signal_b.received_at
+    if not timestamp_a or not timestamp_b:
+        return False
+    delta = abs(timestamp_a - timestamp_b)
+    return delta.total_seconds() <= window_seconds
+
+
+def _location_name_matches(signal_a: Signal, signal_b: Signal) -> bool:
+    location_a = (signal_a.location_name or "").strip().casefold()
+    location_b = (signal_b.location_name or "").strip().casefold()
+    return bool(location_a and location_b and location_a == location_b)
+
+
 def find_duplicate_signal(signal: Signal) -> Signal | None:
     queryset = (
         Signal.objects.exclude(pk=signal.pk)
@@ -49,13 +66,64 @@ def find_duplicate_signal(signal: Signal) -> Signal | None:
         .order_by("-received_at")
     )
     for candidate in queryset[:50]:
-        if signal.occurred_at and candidate.occurred_at:
-            delta = abs(signal.occurred_at - candidate.occurred_at)
-            if delta.total_seconds() > 6 * 3600:
-                continue
-        if _distance_within(signal, candidate, 500):
+        if not _location_name_matches(signal, candidate):
+            continue
+        if not _time_delta_within(signal, candidate, DUPLICATE_TIME_WINDOW_SECONDS):
+            continue
+        if _distance_within(signal, candidate, DUPLICATE_RADIUS_METERS):
             return candidate
     return None
+
+
+def resolve_canonical_signal(signal: Signal) -> Signal:
+    current = signal
+    visited = {signal.pk}
+    while True:
+        duplicate_of = current.metadata.get("duplicate_of")
+        if not duplicate_of:
+            return current
+        try:
+            next_signal = Signal.objects.get(pk=duplicate_of)
+        except Signal.DoesNotExist:
+            return current
+        if next_signal.pk in visited:
+            return current
+        visited.add(next_signal.pk)
+        current = next_signal
+
+
+@transaction.atomic
+def auto_merge_duplicate_signal(signal: Signal, duplicate: Signal) -> Signal:
+    canonical_signal = resolve_canonical_signal(duplicate)
+    merged_at = timezone.now().isoformat()
+    signal.status = SignalStatus.DISMISSED
+    signal.cluster = canonical_signal.cluster or signal.cluster
+    signal.metadata = {
+        **signal.metadata,
+        "duplicate_of": str(canonical_signal.pk),
+        "auto_merged": True,
+        "merged_at": merged_at,
+        "merge_reason": "automatic_duplicate_detection",
+    }
+    signal.save(update_fields=["status", "cluster", "metadata", "updated_at"])
+
+    duplicate_ids = canonical_signal.metadata.get("duplicate_signal_ids", [])
+    duplicate_ids = [*duplicate_ids, str(signal.pk)] if str(signal.pk) not in duplicate_ids else duplicate_ids
+    canonical_signal.metadata = {
+        **canonical_signal.metadata,
+        "duplicate_signal_ids": duplicate_ids,
+        "duplicate_report_count": len(duplicate_ids),
+        "last_auto_merged_duplicate_at": merged_at,
+    }
+    canonical_signal.save(update_fields=["metadata", "updated_at"])
+
+    record_audit_event(
+        "signal.auto_merged_duplicate",
+        obj=signal,
+        description=f"Signal '{signal.title}' auto-merged into '{canonical_signal.title}'.",
+        metadata={"target_signal_id": str(canonical_signal.pk)},
+    )
+    return canonical_signal
 
 
 def _calculate_cluster_centroid(signals):
@@ -168,10 +236,15 @@ def promote_pattern_to_incident(pattern: Pattern) -> Incident | None:
     if not signals:
         return None
 
+    primary_category = signals[0].category
+    sensitive_signal = primary_category in {"armed_robbery", "gunshots_heard", "kidnapping"}
     should_promote = (
         len(signals) >= 3
         or pattern.confidence in {ConfidenceLevel.CORROBORATED, ConfidenceLevel.HIGH}
-        or any(signal.severity in {SeverityLevel.HIGH, SeverityLevel.CRITICAL} for signal in signals)
+        or (
+            not sensitive_signal
+            and any(signal.severity in {SeverityLevel.HIGH, SeverityLevel.CRITICAL} for signal in signals)
+        )
     )
     if not should_promote:
         return None
@@ -220,8 +293,13 @@ def promote_pattern_to_incident(pattern: Pattern) -> Incident | None:
 def process_signal_intelligence(signal: Signal) -> dict:
     duplicate = find_duplicate_signal(signal)
     if duplicate:
-        signal.metadata = {**signal.metadata, "duplicate_of": str(duplicate.pk)}
-        signal.save(update_fields=["metadata", "updated_at"])
+        duplicate = auto_merge_duplicate_signal(signal, duplicate)
+        return {
+            "duplicate": duplicate,
+            "cluster": duplicate.cluster if duplicate.cluster_id else None,
+            "pattern": None,
+            "incident": None,
+        }
 
     cluster = upsert_cluster_for_signal(signal)
     pattern = None

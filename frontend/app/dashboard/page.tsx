@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
+import InternalDashboardPage from "../internal/page";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,16 +65,6 @@ type NearbyIncident = {
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
-
-const NAV_ITEMS = [
-  { label: "Home", path: "/dashboard" },
-  { label: "Live Map", path: "/dashboard/live-intelligence" },
-  { label: "Reports", path: "/dashboard/incident-reports" },
-  { label: "Routes", path: "/dashboard/route-intelligence" },
-  { label: "Predictions", path: "/dashboard/ai-predictions" },
-  { label: "Drone", path: "/dashboard/drone-intelligence" },
-  { label: "Profile", path: "/dashboard/profile" },
-];
 
 const AREA_HUBS: AreaHub[] = [
   { label: "Lagos", state: "Lagos", latitude: 6.5244, longitude: 3.3792 },
@@ -244,9 +237,9 @@ const I = {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function Sidebar({
-  open, onClose, activeIdx, onNav, onLogout,
+  open, onClose, activeIdx, onNav, onLogout, navItems,
 }: {
-  open: boolean; onClose: () => void; activeIdx: number; onNav: (i: number) => void; onLogout: () => void;
+  open: boolean; onClose: () => void; activeIdx: number; onNav: (i: number) => void; onLogout: () => void; navItems: NavItem[];
 }) {
   return (
     <>
@@ -257,7 +250,7 @@ function Sidebar({
           <p className="mt-1 text-[10px] uppercase tracking-widest text-white/35">Safety Intelligence</p>
         </div>
         <nav className="flex-1 space-y-0.5 px-3 py-3">
-          {NAV_ITEMS.map((item, i) => (
+          {navItems.map((item, i) => (
             <button key={item.label} onClick={() => { onNav(i); onClose(); }}
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${activeIdx === i ? "bg-cyan-500/10 text-cyan-300" : "text-white/45 hover:bg-white/[0.04] hover:text-white/80"}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${activeIdx === i ? "bg-cyan-400" : "bg-white/15"}`} />
@@ -366,10 +359,17 @@ function IncidentCard({ inc, onClick }: { inc: NearbyIncident; onClick: () => vo
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const role = getCurrentRole();
+
+  if (role === "analyst" || role === "admin") {
+    return <InternalDashboardPage />;
+  }
+
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(0);
+  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems("community_reporter"));
 
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
@@ -387,6 +387,10 @@ export default function DashboardPage() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    setNavItems(getPublicNavItems(getCurrentRole()));
   }, []);
 
   useEffect(() => {
@@ -561,8 +565,11 @@ export default function DashboardPage() {
 
   const nav = useCallback((i: number) => {
     setActiveNav(i);
-    router.push(NAV_ITEMS[i].path);
-  }, [router]);
+    const next = navItems[i];
+    if (next) {
+      router.push(next.path);
+    }
+  }, [navItems, router]);
 
   if (!mounted) return null;
 
@@ -574,7 +581,14 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[#060B16] text-white antialiased">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_50%_at_0%_0%,rgba(6,182,212,0.05),transparent),radial-gradient(ellipse_60%_40%_at_100%_100%,rgba(255,82,82,0.04),transparent)]" />
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeIdx={activeNav} onNav={nav} onLogout={handleLogout} />
+      <DashboardSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        activePath="/dashboard"
+        onNavigate={(path) => router.push(path)}
+        onLogout={handleLogout}
+        role={role}
+      />
 
       <div className="lg:ml-64">
         {/* Top bar */}

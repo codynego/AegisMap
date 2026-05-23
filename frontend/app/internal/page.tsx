@@ -71,8 +71,9 @@ const NAV_ITEMS = [
   "Live Intelligence",
   "Incident Reports",
   "Route Intelligence",
-  "AI Predictions",
+  "Analytics",
   "Drone Intelligence",
+  "Settings",
 ];
 
 function relativeTime(value?: string | null) {
@@ -957,22 +958,25 @@ export default function DashboardPage() {
         onNavSelect={(index) => {
           setActiveNav(index);
           if (index === 0) {
-            router.push("/internal");
+            router.push("/dashboard");
           }
           if (index === 1) {
-            router.push("/internal/live-intelligence");
+            router.push("/dashboard/live-intelligence");
           }
           if (index === 2) {
-            router.push("/internal/incident-reports");
+            router.push("/dashboard/incident-reports");
           }
           if (index === 3) {
-            router.push("/internal/route-intelligence");
+            router.push("/dashboard/route-intelligence");
           }
           if (index === 4) {
-            router.push("/internal/ai-predictions");
+            router.push("/dashboard/analytics");
           }
           if (index === 5) {
-            router.push("/internal/drone-intelligence");
+            router.push("/dashboard/drone-intelligence");
+          }
+          if (index === 6) {
+            router.push("/dashboard/settings");
           }
         }}
       />

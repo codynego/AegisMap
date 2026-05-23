@@ -482,6 +482,7 @@ export function DashboardMap({
   const [isAddressSuggestionOpen, setIsAddressSuggestionOpen] = useState(false);
   const [isLoadingAddressOptions, setIsLoadingAddressOptions] = useState(false);
   const addressSearchRequestRef = useRef(0);
+  const selectedStateRef = useRef(initialState);
 
   const stateData = useMemo(
     () =>
@@ -489,6 +490,7 @@ export function DashboardMap({
       NIGERIA_STATES.find((s) => s.state === "Lagos")!,
     [selectedState],
   );
+  const stateZoom = 8.5;
   const mapStyle = initialMapStyle;
   const zoomLevel = initialZoom;
   const exactPin = initialExactPin;
@@ -502,6 +504,10 @@ export function DashboardMap({
   useEffect(() => {
     pinpointModeRef.current = pinpointMode;
   }, [pinpointMode]);
+
+  useEffect(() => {
+    selectedStateRef.current = selectedState;
+  }, [selectedState]);
 
   // ── Inject keyframe animations once ──
   useEffect(() => {
@@ -534,7 +540,7 @@ export function DashboardMap({
     }
     const requestId = addressSearchRequestRef.current + 1;
     addressSearchRequestRef.current = requestId;
-    searchLocations(addressQuery, 8)
+    searchLocations(addressQuery, 8, { state: selectedStateRef.current })
       .then((results) => {
         if (addressSearchRequestRef.current !== requestId) return;
         setAddressOptions(
@@ -652,14 +658,14 @@ export function DashboardMap({
     focusKeyRef.current = nextFocusKey;
     map.flyTo({
       center: focusCenter,
-      zoom: toMapZoom(zoomLevel),
+      zoom: selectedAddress ? toMapZoom(zoomLevel) : stateZoom,
       speed: 0.85,
       curve: 1.2,
       essential: true,
     });
     onFocusChange?.({ latitude: focusCenter[1], longitude: focusCenter[0] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, focusCenter, zoomLevel]);
+  }, [loaded, focusCenter, zoomLevel, selectedAddress]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1136,6 +1142,16 @@ export function DashboardMap({
     onZoomChange?.(nextZoom);
   }
 
+  function syncState(nextState: string) {
+    setSelectedState(nextState);
+    selectedStateRef.current = nextState;
+    setSelectedAddress(null);
+    setAddressQuery(nextState);
+    setAddressOptions([]);
+    setIsAddressSuggestionOpen(false);
+    onStateChange?.(nextState);
+  }
+
   function syncAddressQuery(nextQuery: string) {
     setAddressQuery(nextQuery);
     const trimmed = nextQuery.trim();
@@ -1187,6 +1203,7 @@ export function DashboardMap({
     <ControlsContent
       mapStyle={mapStyle}
       zoomLevel={zoomLevel}
+      selectedState={selectedState}
       addressQuery={addressQuery}
       addressOptions={addressOptions}
       isAddressSuggestionOpen={isAddressSuggestionOpen}
@@ -1197,6 +1214,7 @@ export function DashboardMap({
       statusMsg={statusMsg}
       onMapStyleChange={syncMapStyle}
       onZoomChange={syncZoom}
+      onStateChange={syncState}
       onAddressQueryChange={syncAddressQuery}
       onAddressSuggestionOpenChange={setIsAddressSuggestionOpen}
       onPickAddress={pickAddress}
@@ -1408,6 +1426,7 @@ export function DashboardMap({
 type ControlsProps = {
   mapStyle: string;
   zoomLevel: number;
+  selectedState: string;
   addressQuery: string;
   addressOptions: SearchOption[];
   isAddressSuggestionOpen: boolean;
@@ -1418,6 +1437,7 @@ type ControlsProps = {
   statusMsg: string;
   onMapStyleChange: (v: string) => void;
   onZoomChange: (v: number) => void;
+  onStateChange: (v: string) => void;
   onAddressQueryChange: (v: string) => void;
   onAddressSuggestionOpenChange: (value: boolean) => void;
   onPickAddress: (opt: SearchOption) => void;
@@ -1436,6 +1456,7 @@ type ControlsProps = {
 function ControlsContent({
   mapStyle,
   zoomLevel,
+  selectedState,
   addressQuery,
   addressOptions,
   isAddressSuggestionOpen,
@@ -1446,6 +1467,7 @@ function ControlsContent({
   statusMsg,
   onMapStyleChange,
   onZoomChange,
+  onStateChange,
   onAddressQueryChange,
   onAddressSuggestionOpenChange,
   onPickAddress,
@@ -1607,6 +1629,24 @@ function ControlsContent({
                 {MAP_STYLES.map((s) => (
                   <option key={s.value} value={s.value} className="bg-[#0d1426]">
                     {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {/* State */}
+          <div className={sectionCls}>
+            <label>
+              <span className={labelCls}>State</span>
+              <select
+                value={selectedState}
+                onChange={(e) => onStateChange(e.target.value)}
+                className={inputCls}
+              >
+                {NIGERIA_STATES.map((state) => (
+                  <option key={state.state} value={state.state} className="bg-[#0d1426]">
+                    {state.state}
                   </option>
                 ))}
               </select>

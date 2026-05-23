@@ -37,6 +37,21 @@ class DashboardAccessTests(TestCase):
         response = self.client.get("/api/dashboard/summary/")
         self.assertEqual(response.status_code, 403)
 
+    def test_dashboard_summary_blocks_public_user_role(self):
+        register_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "public_summary",
+                "email": "public_summary@example.com",
+                "password": "strongpass123",
+            },
+        )
+        token = register_response.json()["token"]
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Token {token}"
+
+        response = self.client.get("/api/dashboard/summary/")
+        self.assertEqual(response.status_code, 403)
+
     def test_dashboard_summary_returns_operational_data(self):
         user = User.objects.create_user(username="ops_summary", password="strongpass123")
         UserProfile.objects.create(user=user, role=UserRole.ANALYST, display_name="Ops Summary")

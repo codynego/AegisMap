@@ -105,6 +105,51 @@ class Signal(models.Model):
         return self.title
 
 
+class VerificationResponse(models.TextChoices):
+    CONFIRM = "confirm", "Confirm"
+    DENY = "deny", "Deny"
+    UNSURE = "unsure", "Unsure"
+
+
+class SignalVerification(models.Model):
+    signal = models.ForeignKey(
+        Signal,
+        on_delete=models.CASCADE,
+        related_name="verification_events",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="signal_verifications",
+    )
+    source_profile = models.ForeignKey(
+        "users.SourceProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="verification_events",
+    )
+    response = models.CharField(
+        max_length=16,
+        choices=VerificationResponse.choices,
+    )
+    weight = models.DecimalField(max_digits=6, decimal_places=2, default=1)
+    distance_meters = models.PositiveIntegerField(null=True, blank=True)
+    note = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["signal", "user"], name="unique_signal_verification_per_user"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.signal.title} - {self.response}"
+
+
 class SignalEvidenceType(models.TextChoices):
     IMAGE = "image", "Image"
     VIDEO = "video", "Video"

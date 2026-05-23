@@ -23,6 +23,7 @@ Authentication:
 - `incidents`
 - `watch-zones`
 - `risk-snapshots`
+- `risk-forecasts`
 - `geofences`
 - `alerts`
 - `alert-rules`
@@ -59,6 +60,10 @@ Authentication:
 ### Watch Zones
 
 - `POST /api/watch-zones/{id}/evaluate/`
+
+### Risk Forecasting
+
+- `GET /api/risk-forecasts/`
 
 ### Alerts
 

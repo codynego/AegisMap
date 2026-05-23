@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { DashboardMap } from "@/components/dashboard-map";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { getCurrentRole } from "@/lib/access";
+import InternalLiveIntelligencePage from "../../internal/live-intelligence/page";
 import {
   formatReportType,
   normalizeReportType,
@@ -608,6 +611,12 @@ function ArrowLeftIcon() {
 }
 
 export default function LiveIntelligencePage() {
+  const role = getCurrentRole();
+
+  if (role === "analyst" || role === "admin") {
+    return <InternalLiveIntelligencePage />;
+  }
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
@@ -1079,20 +1088,13 @@ export default function LiveIntelligencePage() {
     <div className="min-h-screen bg-[#060B16] text-white antialiased">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(6,182,212,0.04),transparent_50%)]" />
 
-      <NavSidebar
+      <DashboardSidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        activeIndex={activeNav}
+        activePath="/dashboard/live-intelligence"
+        onNavigate={(path) => router.push(path)}
         onLogout={handleLogout}
-        onNavSelect={(index) => {
-          setActiveNav(index);
-          if (index === 0) router.push("/dashboard");
-          if (index === 1) router.push("/dashboard/live-intelligence");
-          if (index === 2) router.push("/dashboard/incident-reports");
-          if (index === 3) router.push("/dashboard/route-intelligence");
-          if (index === 4) router.push("/dashboard/ai-predictions");
-          if (index === 5) router.push("/dashboard/drone-intelligence");
-        }}
+        role={role}
       />
 
       <div className="lg:ml-72">

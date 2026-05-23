@@ -6,7 +6,7 @@ from apps.audit_logs.views import AuditEventViewSet
 from apps.geofences.views import GeofenceViewSet
 from apps.incidents.views import IncidentViewSet, PatternViewSet, SignalClusterViewSet
 from apps.media_assets.views import MediaAssetViewSet, PatrolUploadViewSet
-from apps.risk.views import RiskSnapshotViewSet, WatchZoneViewSet
+from apps.risk.views import RiskForecastViewSet, RiskSnapshotViewSet, WatchZoneViewSet
 from apps.signals.views import (
     SignalAnalyticsViewSet,
     SignalEvidenceViewSet,
@@ -31,6 +31,7 @@ router.register("patterns", PatternViewSet, basename="pattern")
 router.register("incidents", IncidentViewSet, basename="incident")
 router.register("watch-zones", WatchZoneViewSet, basename="watch-zone")
 router.register("risk-snapshots", RiskSnapshotViewSet, basename="risk-snapshot")
+router.register("risk-forecasts", RiskForecastViewSet, basename="risk-forecast")
 router.register("geofences", GeofenceViewSet, basename="geofence")
 router.register("patrol-uploads", PatrolUploadViewSet, basename="patrol-upload")
 router.register("media-assets", MediaAssetViewSet, basename="media-asset")

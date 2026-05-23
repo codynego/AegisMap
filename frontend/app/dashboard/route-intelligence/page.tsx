@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
+import InternalRouteIntelligencePage from "../../internal/route-intelligence/page";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
 import { searchLocations, type LocationSearchResult } from "@/lib/location-search";
 
@@ -147,15 +150,6 @@ type LiveAlert = {
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
-
-const NAV_ITEMS = [
-  { label: "Home", path: "/dashboard" },
-  { label: "Map", path: "/dashboard/live-intelligence" },
-  { label: "Report", path: "/dashboard/incident-reports" },
-  { label: "Routes", path: "/dashboard/route-intelligence" },
-  { label: "Alerts", path: "/dashboard/ai-predictions" },
-  { label: "Profile", path: "/dashboard/drone-intelligence" },
-];
 
 const ROUTE_HUBS: RouteHub[] = [
   { id: "lagos", label: "Lagos", state: "Lagos", latitude: 6.5244, longitude: 3.3792 },
@@ -622,12 +616,14 @@ function Sidebar({
   activeIdx,
   onNav,
   onLogout,
+  navItems,
 }: {
   open: boolean;
   onClose: () => void;
   activeIdx: number;
   onNav: (i: number) => void;
   onLogout: () => void;
+  navItems: NavItem[];
 }) {
   return (
     <>
@@ -648,7 +644,7 @@ function Sidebar({
           <p className="mt-1 text-[10px] uppercase tracking-widest text-white/35">Tactical Intelligence</p>
         </div>
         <nav className="flex-1 space-y-0.5 px-3">
-          {NAV_ITEMS.map((item, i) => (
+          {navItems.map((item, i) => (
             <button
               key={item.label}
               onClick={() => { onNav(i); onClose(); }}
@@ -1146,10 +1142,17 @@ function pushLiveAlert(
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function RouteIntelligencePage() {
+  const role = getCurrentRole();
+
+  if (role === "analyst" || role === "admin") {
+    return <InternalRouteIntelligencePage />;
+  }
+
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(3);
+  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems("community_reporter"));
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("planner");
 
@@ -1239,6 +1242,10 @@ export default function RouteIntelligencePage() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    setNavItems(getPublicNavItems(getCurrentRole()));
   }, []);
 
   useEffect(() => {
@@ -1408,6 +1415,8 @@ export default function RouteIntelligencePage() {
     () => (useCurrentLocation && originLocation ? makeCurrentLocationHub(originLocation) : null),
     [originLocation, useCurrentLocation],
   );
+  const originSearchState = currentOriginHub?.state ?? customOrigin?.state ?? routeHubs.find((hub) => hub.id === originId)?.state ?? routeHubs[0]?.state ?? "Lagos";
+  const destinationSearchState = customDestination?.state ?? routeHubs.find((hub) => hub.id === destinationId)?.state ?? routeHubs[1]?.state ?? "Lagos";
 
   useEffect(() => {
     if (originInput.trim().length < 2) {
@@ -1416,10 +1425,13 @@ export default function RouteIntelligencePage() {
     let active = true;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const remote = await searchLocations(originInput, 5);
+        const remote = await searchLocations(originInput, 5, { state: originSearchState });
         if (!active) return;
+        const normalizedInput = originInput.trim().toLowerCase();
+        const normalizedState = originSearchState.trim().toLowerCase();
         const local = routeHubs
-          .filter((hub) => hub.label.toLowerCase().includes(originInput.trim().toLowerCase()))
+          .filter((hub) => hub.state.trim().toLowerCase() === normalizedState)
+          .filter((hub) => !normalizedInput || hub.label.toLowerCase().includes(normalizedInput) || normalizedInput === normalizedState)
           .slice(0, 4)
           .map((hub) => ({
             id: hub.id,
@@ -1449,7 +1461,7 @@ export default function RouteIntelligencePage() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [originInput, routeHubs]);
+  }, [originInput, originSearchState, routeHubs]);
 
   useEffect(() => {
     if (destinationInput.trim().length < 2) {
@@ -1458,10 +1470,13 @@ export default function RouteIntelligencePage() {
     let active = true;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const remote = await searchLocations(destinationInput, 5);
+        const remote = await searchLocations(destinationInput, 5, { state: destinationSearchState });
         if (!active) return;
+        const normalizedInput = destinationInput.trim().toLowerCase();
+        const normalizedState = destinationSearchState.trim().toLowerCase();
         const local = routeHubs
-          .filter((hub) => hub.label.toLowerCase().includes(destinationInput.trim().toLowerCase()))
+          .filter((hub) => hub.state.trim().toLowerCase() === normalizedState)
+          .filter((hub) => !normalizedInput || hub.label.toLowerCase().includes(normalizedInput) || normalizedInput === normalizedState)
           .slice(0, 4)
           .map((hub) => ({
             id: hub.id,
@@ -1491,7 +1506,7 @@ export default function RouteIntelligencePage() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [destinationInput, routeHubs]);
+  }, [destinationInput, destinationSearchState, routeHubs]);
 
   const origin = currentOriginHub ?? customOrigin ?? routeHubs.find((h) => h.id === originId) ?? routeHubs[0];
   const destination = customDestination ?? routeHubs.find((h) => h.id === destinationId) ?? routeHubs[1];
@@ -1767,8 +1782,11 @@ export default function RouteIntelligencePage() {
 
   const handleNav = useCallback((i: number) => {
     setActiveNav(i);
-    router.push(NAV_ITEMS[i].path);
-  }, [router]);
+    const next = navItems[i];
+    if (next) {
+      router.push(next.path);
+    }
+  }, [navItems, router]);
 
   const handleUseCurrentLocation = useCallback(() => {
     setOriginId(CURRENT_LOCATION_HUB_ID);
@@ -1842,12 +1860,13 @@ export default function RouteIntelligencePage() {
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_50%_at_0%_0%,rgba(6,182,212,0.04),transparent)]" />
       <LiveWarningStack alerts={liveAlerts} />
 
-      <Sidebar
+      <DashboardSidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        activeIdx={activeNav}
-        onNav={handleNav}
+        activePath="/dashboard/route-intelligence"
+        onNavigate={(path) => router.push(path)}
         onLogout={handleLogout}
+        role={role}
       />
 
       {/* ── Desktop layout ── */}
