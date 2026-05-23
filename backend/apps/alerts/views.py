@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.audit_logs.services import record_audit_event
-from apps.users.permissions import IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import IsAuthenticatedReadAnalystWrite, IsAnalystOrAdmin
 from apps.users.permissions import is_analyst_or_admin
 
 from .models import Alert, AlertRule

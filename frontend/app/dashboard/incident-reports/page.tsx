@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole } from "@/lib/access";
-import InternalIncidentReportsPage from "../../internal/incident-reports/page";
 import { formatReportType, REPORT_TYPE_DEFINITIONS } from "@/lib/report-types";
 
 type ExactPin = {
@@ -262,10 +261,6 @@ function LocationPinIcon() {
 
 export default function IncidentReportsPage() {
   const role = getCurrentRole();
-
-  if (role === "analyst" || role === "admin") {
-    return <InternalIncidentReportsPage />;
-  }
 
   const router = useRouter();
   const [mounted, setMounted] = useState(false);

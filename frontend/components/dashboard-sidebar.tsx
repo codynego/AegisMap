@@ -1,6 +1,6 @@
 "use client";
 
-import { getPublicNavItems, type AppRole } from "@/lib/access";
+import { getPublicNavItems, INTERNAL_NAV_ITEMS, isAnalystRole, type AppRole } from "@/lib/access";
 
 export type DashboardSidebarProps = {
   open: boolean;
@@ -23,7 +23,7 @@ export function DashboardSidebar({
   title = "GeoPulse AI",
   subtitle = "Safety Intelligence",
 }: DashboardSidebarProps) {
-  const navItems = getPublicNavItems(role);
+  const navItems = isAnalystRole(role) ? INTERNAL_NAV_ITEMS : getPublicNavItems(role);
 
   return (
     <>

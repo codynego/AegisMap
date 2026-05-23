@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole } from "@/lib/access";
-import InternalLiveIntelligencePage from "../../internal/live-intelligence/page";
 import {
   formatReportType,
   normalizeReportType,
@@ -612,10 +611,6 @@ function ArrowLeftIcon() {
 
 export default function LiveIntelligencePage() {
   const role = getCurrentRole();
-
-  if (role === "analyst" || role === "admin") {
-    return <InternalLiveIntelligencePage />;
-  }
 
   const router = useRouter();
   const searchParams = useSearchParams();

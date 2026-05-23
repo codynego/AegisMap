@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 
 import { getCurrentRole } from "@/lib/access";
-import InternalRiskForecastingPage from "../../internal/ai-predictions/page";
 
 export default function DashboardAnalyticsPage() {
   const role = getCurrentRole();
@@ -15,7 +14,12 @@ export default function DashboardAnalyticsPage() {
   }, [role]);
 
   if (role === "analyst" || role === "admin") {
-    return <InternalRiskForecastingPage />;
+    return (
+      <div className="min-h-screen bg-[#060B16] text-white px-6 py-8">
+        <h1 className="text-2xl font-bold">AI Predictions</h1>
+        <p className="mt-2 text-sm text-white/60">Incident forecasting and predictive risk signals for internal teams.</p>
+      </div>
+    );
   }
 
   return null;

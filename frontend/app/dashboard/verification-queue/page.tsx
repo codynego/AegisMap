@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getCurrentRole, getDefaultRouteForRole, getPublicNavItems, isTrustedReporterRole, type NavItem } from "@/lib/access";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { getCurrentRole, getDefaultRouteForRole, isTrustedReporterRole } from "@/lib/access";
 
 type SignalRecord = {
   id: string;
@@ -42,10 +43,10 @@ function relativeTime(value?: string | null) {
 export default function VerificationQueuePage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [signals, setSignals] = useState<SignalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems("trusted_verifier"));
   const role = getCurrentRole();
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : window.localStorage.getItem("geopulse.token"),
@@ -62,7 +63,6 @@ export default function VerificationQueuePage() {
       window.location.replace(getDefaultRouteForRole(role));
       return;
     }
-    setNavItems(getPublicNavItems(role));
   }, [mounted, role]);
 
   useEffect(() => {
@@ -111,42 +111,52 @@ export default function VerificationQueuePage() {
     [authToken],
   );
 
-  const activeIndex = useMemo(
-    () => navItems.findIndex((item) => item.path === "/dashboard/verification-queue"),
-    [navItems],
-  );
-
   if (!mounted || !isTrustedReporterRole(role)) return null;
 
   return (
-    <div className="min-h-screen bg-[#060B16] text-white">
-      <div className="mx-auto flex min-h-screen max-w-6xl">
-        <aside className="hidden h-screen w-64 flex-col border-r border-white/[0.06] bg-[#070D1A]/98 px-3 py-6 lg:flex">
-          <div className="px-3 pb-6">
-            <h1 className="text-xl font-bold tracking-tight text-cyan-400">GeoPulse AI</h1>
-            <p className="mt-1 text-[10px] uppercase tracking-widest text-white/35">Trusted Reporter Network</p>
-          </div>
-          <nav className="flex-1 space-y-1">
-            {navItems.map((item, index) => (
-              <button
-                key={item.path}
-                type="button"
-                onClick={() => router.push(item.path)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
-                  index === activeIndex
-                    ? "bg-cyan-500/10 text-cyan-300"
-                    : "text-white/45 hover:bg-white/[0.04] hover:text-white/80"
-                }`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${index === activeIndex ? "bg-cyan-400" : "bg-white/15"}`} />
-                {item.label}
-              </button>
-            ))}
-          </nav>
-        </aside>
+    <div className="min-h-screen bg-[#060B16] text-white antialiased">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_50%_at_0%_0%,rgba(6,182,212,0.05),transparent),radial-gradient(ellipse_60%_40%_at_100%_100%,rgba(255,82,82,0.04),transparent)]" />
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="space-y-5">
+      <DashboardSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        activePath="/dashboard/verification-queue"
+        onNavigate={(path) => router.push(path)}
+        onLogout={() => {
+          window.localStorage.removeItem("geopulse.token");
+          window.localStorage.removeItem("geopulse.user");
+          window.location.assign("/login");
+        }}
+        role={role}
+        subtitle="Trusted Reporter Network"
+      />
+
+      <div className="lg:ml-64">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-[#060B16]/90 px-4 backdrop-blur-xl sm:px-6">
+          <button
+            aria-label="Open menu"
+            onClick={() => setSidebarOpen(true)}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] text-white/70 lg:hidden"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400" />
+            <span className="truncate text-sm text-white/55">Verification Queue</span>
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest text-emerald-300">
+              Trusted
+            </span>
+          </div>
+        </header>
+
+        <main className="px-4 py-6 sm:px-6 lg:px-8">
+          <div className="w-full space-y-5">
             <div className="rounded-3xl border border-emerald-500/20 bg-[#08101F]/90 p-5">
               <p className="text-[10px] uppercase tracking-widest text-emerald-300">Verification queue</p>
               <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Help confirm nearby community reports</h1>

@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole, getPublicNavItems, isTrustedReporterRole, type NavItem } from "@/lib/access";
-import InternalRiskForecastingPage from "../../internal/ai-predictions/page";
 
 type AlertRecord = {
   id: number;
@@ -93,13 +92,9 @@ function Sidebar({
 export default function AlertsPage() {
   const role = getCurrentRole();
 
-  if (role === "analyst" || role === "admin") {
-    return <InternalRiskForecastingPage />;
-  }
-
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems("community_reporter"));
+  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems(getCurrentRole()));
   const [activeIndex, setActiveIndex] = useState(4);
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,19 +161,36 @@ export default function AlertsPage() {
   if (!mounted) return null;
 
   return (
-    <div className="min-h-screen bg-[#060B16] text-white">
-      <div className="flex min-h-screen">
-        <DashboardSidebar
-          open={false}
-          onClose={() => {}}
-          activePath="/dashboard/ai-predictions"
-          onNavigate={(path) => router.push(path)}
-          onLogout={handleLogout}
-          role={role}
-        />
+    <div className="min-h-screen bg-[#060B16] text-white antialiased">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_50%_at_0%_0%,rgba(6,182,212,0.05),transparent),radial-gradient(ellipse_60%_40%_at_100%_100%,rgba(255,82,82,0.04),transparent)]" />
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-5xl space-y-5">
+      <DashboardSidebar
+        open={false}
+        onClose={() => {}}
+        activePath="/dashboard/ai-predictions"
+        onNavigate={(path) => router.push(path)}
+        onLogout={handleLogout}
+        role={role}
+      />
+
+      <div className="lg:ml-64">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/[0.06] bg-[#070D1A]/90 px-4 backdrop-blur-xl sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/5 px-3 py-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+              <span className="text-[10px] uppercase tracking-widest text-cyan-300">AI Predictions</span>
+            </div>
+            <span className="truncate text-sm text-white/45">Incident forecasting and verified alerts</span>
+          </div>
+          {isTrustedReporterRole(role) ? (
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest text-emerald-300">
+              Trusted reporter
+            </span>
+          ) : null}
+        </header>
+
+        <main className="px-4 py-6 sm:px-6 lg:px-8">
+          <div className="w-full space-y-5">
             <div className="rounded-3xl border border-cyan-500/15 bg-[#08101F]/90 p-5">
               <p className="text-[10px] uppercase tracking-widest text-cyan-300">Verified alerts</p>
               <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">Safety alerts near active communities</h1>

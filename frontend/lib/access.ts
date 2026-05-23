@@ -21,7 +21,7 @@ export const INTERNAL_NAV_ITEMS: NavItem[] = [
   { label: "Incident Reports", path: "/dashboard/incident-reports" },
   { label: "Route Intelligence", path: "/dashboard/route-intelligence" },
   { label: "Drone Intelligence", path: "/dashboard/drone-intelligence" },
-  { label: "Analytics", path: "/dashboard/analytics" },
+  { label: "AI Predictions", path: "/dashboard/ai-predictions" },
   { label: "Settings", path: "/dashboard/settings" },
 ];
 
@@ -65,20 +65,25 @@ export function getCurrentRole() {
 }
 
 export function getPublicNavItems(role: AppRole): NavItem[] {
-  const items: NavItem[] = [
+  // Public-facing nav for community users and trusted reporters.
+  // Keep ordering consistent with product spec.
+  const userItems: NavItem[] = [
     { label: "Home", path: "/dashboard" },
     { label: "Map", path: "/dashboard/live-intelligence" },
     { label: "Report", path: "/dashboard/incident-reports" },
     { label: "Routes", path: "/dashboard/route-intelligence" },
     { label: "Alerts", path: "/dashboard/ai-predictions" },
+    { label: "Profile", path: "/dashboard/profile" },
   ];
 
   if (isTrustedReporterRole(role)) {
-    items.push({ label: "Verification Queue", path: "/dashboard/verification-queue" });
+    // Insert Verification Queue before Profile for trusted reporters.
+    const trusted = [...userItems];
+    trusted.splice(userItems.length - 1, 0, { label: "Verification Queue", path: "/dashboard/verification-queue" });
+    return trusted;
   }
 
-  items.push({ label: "Profile", path: "/dashboard/profile" });
-  return items;
+  return userItems;
 }
 
 export function resolvePublicNavItems() {

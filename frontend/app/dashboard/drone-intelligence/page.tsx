@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import { getCurrentRole } from "@/lib/access";
-import InternalDroneIntelligencePage from "../../internal/drone-intelligence/page";
 
 export default function DashboardDroneRedirectPage() {
   const role = getCurrentRole();
@@ -14,7 +13,12 @@ export default function DashboardDroneRedirectPage() {
   }, [role]);
 
   if (role === "analyst" || role === "admin") {
-    return <InternalDroneIntelligencePage />;
+    return (
+      <div className="min-h-screen bg-[#060B16] text-white px-6 py-8">
+        <h1 className="text-2xl font-bold">Drone Intelligence</h1>
+        <p className="mt-2 text-sm text-white/60">Operational drone feeds and overlays for analysts.</p>
+      </div>
+    );
   }
 
   return null;

@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
-import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
-import InternalDashboardPage from "../internal/page";
+import { getCurrentRole, getPublicNavItems, INTERNAL_NAV_ITEMS, isAnalystRole, type NavItem } from "@/lib/access";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -361,15 +360,14 @@ function IncidentCard({ inc, onClick }: { inc: NearbyIncident; onClick: () => vo
 export default function DashboardPage() {
   const role = getCurrentRole();
 
-  if (role === "analyst" || role === "admin") {
-    return <InternalDashboardPage />;
-  }
-
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(0);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems("community_reporter"));
+  const [navItems, setNavItems] = useState<NavItem[]>(() => {
+    const r = getCurrentRole();
+    return isAnalystRole(r) ? INTERNAL_NAV_ITEMS : getPublicNavItems(r);
+  });
 
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
@@ -390,7 +388,8 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    setNavItems(getPublicNavItems(getCurrentRole()));
+    const r = getCurrentRole();
+    setNavItems(isAnalystRole(r) ? INTERNAL_NAV_ITEMS : getPublicNavItems(r));
   }, []);
 
   useEffect(() => {

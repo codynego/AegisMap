@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
-import InternalRouteIntelligencePage from "../../internal/route-intelligence/page";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
 import { searchLocations, type LocationSearchResult } from "@/lib/location-search";
 
@@ -1144,15 +1143,11 @@ function pushLiveAlert(
 export default function RouteIntelligencePage() {
   const role = getCurrentRole();
 
-  if (role === "analyst" || role === "admin") {
-    return <InternalRouteIntelligencePage />;
-  }
-
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(3);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems("community_reporter"));
+  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems(getCurrentRole()));
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("planner");
 
