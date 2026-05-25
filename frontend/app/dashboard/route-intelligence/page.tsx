@@ -684,6 +684,7 @@ function SearchInput({
   label,
   value,
   suggestions,
+  isSearching,
   onChange,
   onSelect,
   onClear,
@@ -693,6 +694,7 @@ function SearchInput({
   label: string;
   value: string;
   suggestions: RouteHubSuggestion[];
+  isSearching: boolean;
   onChange: (v: string) => void;
   onSelect: (s: RouteHubSuggestion) => void;
   onClear: () => void;
@@ -702,12 +704,13 @@ function SearchInput({
   const iconBadge: Record<string, string> = {
     state: "ST",
     city: "🏙",
+    town: "🏘",
     place: "📍",
     street: "🛣",
   };
 
   return (
-    <div className="relative">
+    <div className={suggestions.length > 0 ? "relative z-50" : "relative z-10"}>
       <p className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-white/30">
         {icon}
         {label}
@@ -729,8 +732,21 @@ function SearchInput({
         )}
       </div>
 
+      {value.trim().length >= 2 && isSearching && (
+        <div className="mt-2 flex items-center gap-2 rounded-xl border border-cyan-400/15 bg-cyan-500/8 px-3 py-2 text-[11px] text-cyan-200/80">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
+          Searching locations…
+        </div>
+      )}
+
+      {value.trim().length >= 2 && !isSearching && suggestions.length === 0 && (
+        <div className="mt-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[11px] text-white/35">
+          No matches found. Try a town, street, or full address.
+        </div>
+      )}
+
       {suggestions.length > 0 && (
-        <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-30 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#07101e] shadow-[0_24px_60px_rgba(0,0,0,0.5)]">
+        <div className="relative z-[120] mt-2 max-h-72 overflow-y-auto rounded-2xl border border-white/[0.08] bg-[#07101e] shadow-[0_24px_60px_rgba(0,0,0,0.5)]">
           {suggestions.map((s) => (
             <button
               key={s.id}
@@ -742,8 +758,8 @@ function SearchInput({
                 {iconBadge[s.kind] ?? "📍"}
               </span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-white">{s.label}</p>
-                <p className="truncate text-[11px] text-white/35">{s.description || s.state}</p>
+                <p className="whitespace-normal break-words text-sm font-medium leading-5 text-white">{s.label}</p>
+                <p className="whitespace-normal break-words text-[11px] leading-4 text-white/35">{s.description || s.state}</p>
               </div>
             </button>
           ))}
@@ -909,7 +925,7 @@ function MainPanel({
   ];
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-visible">
       {/* ── Search bar (always visible) ── */}
       <div className="shrink-0 space-y-3 border-b border-white/[0.06] p-4">
         <div className="flex items-end gap-2">
@@ -1229,6 +1245,8 @@ export default function RouteIntelligencePage() {
   const [destinationInput, setDestinationInput] = useState("Abuja");
   const [originSuggestions, setOriginSuggestions] = useState<RouteHubSuggestion[]>([]);
   const [destinationSuggestions, setDestinationSuggestions] = useState<RouteHubSuggestion[]>([]);
+  const [originSearching, setOriginSearching] = useState(false);
+  const [destinationSearching, setDestinationSearching] = useState(false);
   const [departureHour, setDepartureHour] = useState(new Date().getHours());
   const [selectedRouteId, setSelectedRouteId] = useState("direct");
   const [travelMode, setTravelMode] = useState<TravelMode>("drive");
@@ -1397,16 +1415,17 @@ export default function RouteIntelligencePage() {
 
   // Suggestion search – origin
   useEffect(() => {
-    if (originInput.trim().length < 2) { setOriginSuggestions([]); return; }
+    if (originInput.trim().length < 2) { setOriginSuggestions([]); setOriginSearching(false); return; }
     let active = true;
+    setOriginSearching(true);
     const tid = window.setTimeout(async () => {
       try {
         const [remote, states, cities] = await Promise.all([
-          searchLocations(originInput, 5),
+          searchLocations(originInput, 5, { state: origin.state }),
           Promise.resolve(searchStateSuggestions(originInput, 3).map((s) => ({ ...s, kind: "state" as const }))),
           Promise.resolve(searchAreaHubs(originInput, 6).map((h) => ({
             id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`, label: h.label, state: h.state,
-            latitude: h.latitude, longitude: h.longitude, description: "City", kind: "city" as const,
+            latitude: h.latitude, longitude: h.longitude, description: `${h.label}, ${h.state}`, kind: "city" as const,
           }))),
         ]);
         if (!active) return;
@@ -1417,22 +1436,24 @@ export default function RouteIntelligencePage() {
         ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
         setOriginSuggestions(merged.slice(0, 8));
       } catch { if (active) setOriginSuggestions([]); }
+      finally { if (active) setOriginSearching(false); }
     }, 220);
-    return () => { active = false; window.clearTimeout(tid); };
-  }, [originInput]);
+    return () => { active = false; setOriginSearching(false); window.clearTimeout(tid); };
+  }, [originInput, origin.state]);
 
   // Suggestion search – destination
   useEffect(() => {
-    if (destinationInput.trim().length < 2) { setDestinationSuggestions([]); return; }
+    if (destinationInput.trim().length < 2) { setDestinationSuggestions([]); setDestinationSearching(false); return; }
     let active = true;
+    setDestinationSearching(true);
     const tid = window.setTimeout(async () => {
       try {
         const [remote, states, cities] = await Promise.all([
-          searchLocations(destinationInput, 5),
+          searchLocations(destinationInput, 5, { state: destination.state }),
           Promise.resolve(searchStateSuggestions(destinationInput, 3).map((s) => ({ ...s, kind: "state" as const }))),
           Promise.resolve(searchAreaHubs(destinationInput, 6).map((h) => ({
             id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`, label: h.label, state: h.state,
-            latitude: h.latitude, longitude: h.longitude, description: "City", kind: "city" as const,
+            latitude: h.latitude, longitude: h.longitude, description: `${h.label}, ${h.state}`, kind: "city" as const,
           }))),
         ]);
         if (!active) return;
@@ -1443,9 +1464,10 @@ export default function RouteIntelligencePage() {
         ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
         setDestinationSuggestions(merged.slice(0, 8));
       } catch { if (active) setDestinationSuggestions([]); }
+      finally { if (active) setDestinationSearching(false); }
     }, 220);
-    return () => { active = false; window.clearTimeout(tid); };
-  }, [destinationInput]);
+    return () => { active = false; setDestinationSearching(false); window.clearTimeout(tid); };
+  }, [destinationInput, destination.state]);
 
   // Live tracking effect
   useEffect(() => {

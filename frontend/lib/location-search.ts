@@ -1,4 +1,4 @@
-import { searchAreaHubs } from "@/lib/nigeria-locations";
+import { searchAreaHubs, searchTownHubs } from "@/lib/nigeria-locations";
 export type LocationSearchResult = {
   id: string;
   label: string;
@@ -9,6 +9,7 @@ export type LocationSearchResult = {
 };
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
+const MAPBOX_SEARCH_TYPES = "address,street,block,secondary_address,place,locality,neighborhood,postcode,district";
 
 export const NIGERIA_STATE_NAMES = [
   "Abia",
@@ -121,6 +122,30 @@ type MapboxFeature = {
   name?: string;
 };
 
+type NominatimAddress = {
+  house_number?: string;
+  road?: string;
+  suburb?: string;
+  city?: string;
+  town?: string;
+  village?: string;
+  municipality?: string;
+  county?: string;
+  state?: string;
+  postcode?: string;
+};
+
+type NominatimFeature = {
+  place_id?: number;
+  lat?: string;
+  lon?: string;
+  display_name?: string;
+  name?: string;
+  type?: string;
+  class?: string;
+  address?: NominatimAddress;
+};
+
 function mapboxFeatureLabel(feature: MapboxFeature) {
   return (
     feature.full_address ??
@@ -137,30 +162,102 @@ function mapboxFeatureLabel(feature: MapboxFeature) {
 
 function mapboxFeatureDescription(feature: MapboxFeature) {
   return (
+    feature.full_address ??
+    feature.properties?.full_address ??
     feature.place_formatted ??
     feature.properties?.place_formatted ??
     ""
   ).trim();
 }
 
+function nominatimFeatureLabel(feature: NominatimFeature) {
+  const address = feature.address ?? {};
+  const road = address.road?.trim() ?? "";
+  const houseNumber = address.house_number?.trim() ?? "";
+  const town = address.town?.trim() ?? address.village?.trim() ?? address.city?.trim() ?? address.municipality?.trim() ?? "";
+  const primary = [houseNumber, road].filter(Boolean).join(" ").trim();
+  if (primary) return primary;
+  if (feature.name?.trim()) return feature.name.trim();
+  if (town) return town;
+  return feature.display_name?.trim() ?? "";
+}
+
+function nominatimFeatureDescription(feature: NominatimFeature) {
+  return feature.display_name?.trim() ?? "";
+}
+
+function nominatimFeatureState(feature: NominatimFeature) {
+  return normalizeStateName(feature.address?.state ?? "");
+}
+
+async function fetchNominatimLocations(
+  query: string,
+  limit: number,
+  options?: { state?: string },
+): Promise<LocationSearchResult[]> {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length < 2) return [];
+
+  const variants = [
+    normalizedQuery,
+    options?.state ? `${normalizedQuery}, ${options.state}, Nigeria` : normalizedQuery,
+  ].filter((value, index, self) => Boolean(value) && self.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index);
+
+  const results: NominatimFeature[] = [];
+  for (const variant of variants) {
+    try {
+      const searchParams = new URLSearchParams({
+        q: variant,
+        format: "jsonv2",
+        addressdetails: "1",
+        limit: String(limit),
+        countrycodes: "ng",
+        dedupe: "1",
+        namedetails: "1",
+        "accept-language": "en",
+      });
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?${searchParams.toString()}`);
+      if (!response.ok) continue;
+      const payload = await response.json();
+      if (!Array.isArray(payload)) continue;
+      results.push(...(payload as NominatimFeature[]));
+    } catch {
+      continue;
+    }
+  }
+
+  const requestedState = options?.state?.trim().toLowerCase() ?? "";
+  const seen = new Set<string>();
+  return results.flatMap((feature, index) => {
+    const latitude = typeof feature.lat === "string" ? Number(feature.lat) : NaN;
+    const longitude = typeof feature.lon === "string" ? Number(feature.lon) : NaN;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+
+    const detectedState = nominatimFeatureState(feature);
+    const normalizedDetectedState = detectedState.trim().toLowerCase();
+    if (requestedState && normalizedDetectedState && normalizedDetectedState !== requestedState) {
+      return [];
+    }
+
+    const id = String(feature.place_id ?? `${latitude}:${longitude}:${index}`);
+    if (seen.has(id)) return [];
+    seen.add(id);
+
+    return [{
+      id,
+      label: nominatimFeatureLabel(feature) || coordinateLocationLabel(latitude, longitude),
+      description: nominatimFeatureDescription(feature),
+      latitude,
+      longitude,
+      state: detectedState || options?.state || "Nigeria",
+    } satisfies LocationSearchResult];
+  });
+}
+
 function mapboxFeatureState(feature: MapboxFeature) {
   const contextRegion = feature.properties?.context?.region?.name?.trim();
   if (!contextRegion) return "";
   return normalizeStateName(contextRegion);
-}
-
-function buildScopedQuery(query: string, state?: string) {
-  const parts = [query.trim(), state?.trim()].filter(Boolean) as string[];
-  const scopedParts: string[] = [];
-
-  for (const part of parts) {
-    if (!scopedParts.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
-      scopedParts.push(part);
-    }
-  }
-
-  if (scopedParts.length === 0) return "";
-  return `${scopedParts.join(", ")}, Nigeria`;
 }
 
 export function searchStateSuggestions(query: string, limit = 5) {
@@ -186,6 +283,7 @@ async function fetchLocationFeatures(
   query: string,
   limit: number,
   proximity?: { latitude: number; longitude: number },
+  types = MAPBOX_SEARCH_TYPES,
 ): Promise<MapboxFeature[]> {
   const searchParams = new URLSearchParams({
     q: query,
@@ -194,7 +292,7 @@ async function fetchLocationFeatures(
     country: "NG",
     language: "en",
     limit: String(limit),
-    types: "address,street,place,locality,neighborhood,postcode,district,suburb,poi",
+    types,
   });
 
   if (proximity) {
@@ -210,6 +308,31 @@ async function fetchLocationFeatures(
   return Array.isArray(payload?.features) ? (payload.features as MapboxFeature[]) : [];
 }
 
+async function fetchLocationFeaturesWithFallback(
+  query: string,
+  limit: number,
+  proximity?: { latitude: number; longitude: number },
+): Promise<MapboxFeature[]> {
+  const candidates = [
+    { proximity, types: MAPBOX_SEARCH_TYPES },
+    { types: MAPBOX_SEARCH_TYPES },
+    { types: "address,street,block,secondary_address,place,locality,neighborhood,postcode" },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const features = await fetchLocationFeatures(query, limit, candidate.proximity, candidate.types);
+      if (features.length > 0) {
+        return features;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
 export async function searchLocations(
   query: string,
   limit = 5,
@@ -223,7 +346,15 @@ export async function searchLocations(
   const localCityResults = searchAreaHubs(normalizedQuery, limit * 2, options).map((hub) => ({
     id: `city-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
     label: hub.label,
-    description: "City",
+    description: `${hub.label}, ${hub.state}`,
+    latitude: hub.latitude,
+    longitude: hub.longitude,
+    state: hub.state,
+  } satisfies LocationSearchResult));
+  const localTownResults = searchTownHubs(normalizedQuery, limit * 2, options).map((hub) => ({
+    id: `town-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
+    label: hub.label,
+    description: `${hub.label}, ${hub.state} Town`,
     latitude: hub.latitude,
     longitude: hub.longitude,
     state: hub.state,
@@ -237,22 +368,26 @@ export async function searchLocations(
     state: result.state,
   } satisfies LocationSearchResult));
 
+  const localResults = [...localStateResults, ...localCityResults, ...localTownResults]
+    .filter((item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index);
+
+  const nominatimResults = await fetchNominatimLocations(normalizedQuery, Math.max(limit * 2, 10), options);
+
   if (!MAPBOX_TOKEN) {
-    return [...localStateResults, ...localCityResults]
+    return [...localResults, ...nominatimResults]
       .filter((item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index)
       .slice(0, limit);
   }
 
-  const scopedQuery = buildScopedQuery(query, options?.state);
   const requestedState = options?.state?.trim().toLowerCase() ?? "";
   const stateCenter = options?.state ? NIGERIA_STATE_CENTERS[options.state] : undefined;
-  const queryVariants = [scopedQuery || query.trim(), query.trim()].filter(
+  const queryVariants = [query.trim()].filter(
     (value, index, self) => Boolean(value) && self.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index,
   );
 
   const features: MapboxFeature[] = [];
   for (const variant of queryVariants) {
-    const nextFeatures = await fetchLocationFeatures(variant, Math.max(limit * 2, 10), stateCenter);
+    const nextFeatures = await fetchLocationFeaturesWithFallback(variant, Math.max(limit * 2, 10), stateCenter);
     features.push(...nextFeatures);
   }
 
@@ -291,7 +426,7 @@ export async function searchLocations(
     ];
   });
 
-  const merged = [...localStateResults, ...localCityResults, ...mapped].filter(
+  const merged = [...localResults, ...mapped, ...nominatimResults].filter(
     (item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index,
   );
 
