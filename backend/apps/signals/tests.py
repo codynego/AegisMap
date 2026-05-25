@@ -1,13 +1,34 @@
 from django.test import TestCase, override_settings
+from django.utils import timezone
+from datetime import timedelta
 
 from apps.alerts.models import Alert
 from apps.risk.models import RiskSnapshot, WatchZone
-from apps.signals.models import Signal, SignalIngestionJob
+from apps.signals.models import Signal, SignalIngestionJob, VerificationResponse
+from apps.signals.services import _confidence_decay_penalty, submit_signal_verification
 from apps.users.models import UserRole
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class SignalIntelligenceFlowTests(TestCase):
+    def test_signal_rejects_future_occurred_at(self):
+        future_time = (timezone.now() + timedelta(hours=2)).isoformat()
+
+        response = self.client.post(
+            "/api/signals/",
+            {
+                "title": "Future-dated report",
+                "description": "This should be rejected.",
+                "category": "suspicious_activity",
+                "severity": "medium",
+                "occurred_at": future_time,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("occurred_at", response.json())
+
     def test_anonymous_signal_updates_watch_zone_risk(self):
         watch_zone = WatchZone.objects.create(
             name="Test Zone",
@@ -315,6 +336,10 @@ class SignalIntelligenceFlowTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(verified_response.status_code, 201)
+        verified_signal = Signal.objects.get(pk=verified_response.json()["id"])
+        verified_signal.confidence = "corroborated"
+        verified_signal.status = "triaged"
+        verified_signal.save(update_fields=["confidence", "status", "updated_at"])
 
         list_response = self.client.get("/api/signals/", HTTP_AUTHORIZATION=f"Token {first_token}")
         self.assertEqual(list_response.status_code, 200)
@@ -412,3 +437,106 @@ class SignalIntelligenceFlowTests(TestCase):
         payload = queue_response.json().get("results", [])
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["id"], signal_response.json()["id"])
+
+    def test_trusted_reporter_queue_hides_reports_already_voted_on(self):
+        reporter_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "queue_owner",
+                "email": "queue_owner@example.com",
+                "password": "strongpass123",
+            },
+        )
+        verifier_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "queue_voter",
+                "email": "queue_voter@example.com",
+                "password": "strongpass123",
+            },
+        )
+
+        from django.contrib.auth import get_user_model
+
+        trusted_user = get_user_model().objects.get(username="queue_voter")
+        trusted_user.profile.role = UserRole.TRUSTED_VERIFIER
+        trusted_user.profile.save(update_fields=["role"])
+
+        report_token = reporter_response.json()["token"]
+        trusted_token = verifier_response.json()["token"]
+        signal_response = self.client.post(
+            "/api/signals/",
+            {
+                "title": "Queue vote hide check",
+                "description": "Should disappear after vote.",
+                "category": "unsafe_route",
+                "severity": "medium",
+                "latitude": "9.077000",
+                "longitude": "7.399000",
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Token {report_token}",
+        )
+        signal_id = signal_response.json()["id"]
+
+        vote_response = self.client.post(
+            f"/api/signals/{signal_id}/submit_verification/",
+            {"response": "confirm"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Token {trusted_token}",
+        )
+        self.assertEqual(vote_response.status_code, 200)
+
+        queue_response = self.client.get(
+            "/api/signals/?verification_queue=true",
+            HTTP_AUTHORIZATION=f"Token {trusted_token}",
+        )
+        self.assertEqual(queue_response.status_code, 200)
+        payload = queue_response.json().get("results", [])
+        returned_ids = {item["id"] for item in payload}
+        self.assertNotIn(signal_id, returned_ids)
+
+    def test_decay_only_resets_on_confirming_reconfirmation(self):
+        signal = Signal.objects.create(
+            title="Old route report",
+            description="Old report that should decay.",
+            category="unsafe_route",
+            severity="medium",
+            occurred_at=timezone.now() - timezone.timedelta(days=10),
+        )
+
+        initial_penalty = _confidence_decay_penalty(signal, {"confirm_count": 0})
+        self.assertGreater(initial_penalty, 0)
+
+        deny_user_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "deny_voter",
+                "email": "deny_voter@example.com",
+                "password": "strongpass123",
+            },
+        )
+        self.assertEqual(deny_user_response.status_code, 201)
+        from django.contrib.auth import get_user_model
+        deny_user = get_user_model().objects.get(username="deny_voter")
+        submit_signal_verification(signal=signal, user=deny_user, response=VerificationResponse.DENY)
+        signal.refresh_from_db()
+
+        deny_penalty = _confidence_decay_penalty(signal, {"confirm_count": 0})
+        self.assertEqual(deny_penalty, initial_penalty)
+
+        confirm_user_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "confirm_voter",
+                "email": "confirm_voter@example.com",
+                "password": "strongpass123",
+            },
+        )
+        self.assertEqual(confirm_user_response.status_code, 201)
+        confirm_user = get_user_model().objects.get(username="confirm_voter")
+        submit_signal_verification(signal=signal, user=confirm_user, response=VerificationResponse.CONFIRM)
+        signal.refresh_from_db()
+
+        confirm_penalty = _confidence_decay_penalty(signal, {"confirm_count": 1})
+        self.assertEqual(confirm_penalty, 0)

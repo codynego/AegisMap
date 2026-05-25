@@ -13,12 +13,6 @@ type ExactPin = {
   label: string;
 };
 
-type NavItem = {
-  label: string;
-  icon: string;
-  path: string;
-};
-
 type LocationSuggestion = {
   id: string;
   label: string;
@@ -26,6 +20,8 @@ type LocationSuggestion = {
   latitude: number;
   longitude: number;
 };
+
+type ReportTimeMode = "now" | "custom";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
@@ -67,6 +63,32 @@ function mediaTypeFromFile(file: File) {
 
 function coordinateLocationLabel(latitude: number, longitude: number) {
   return `Near ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+}
+
+function toDateTimeLocalValue(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function resolveOccurredAtIso(reportTimeMode: ReportTimeMode, customOccurredAt: string) {
+  if (reportTimeMode === "now") {
+    return new Date().toISOString();
+  }
+
+  if (!customOccurredAt) {
+    return null;
+  }
+
+  const parsed = new Date(customOccurredAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
 }
 
 async function fetchLocationSuggestions(query: string): Promise<LocationSuggestion[]> {
@@ -240,6 +262,8 @@ function Sidebar({
   );
 }
 
+void Sidebar;
+
 function MenuIconButton() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -274,6 +298,8 @@ export default function IncidentReportsPage() {
   const [reportType, setReportType] = useState<(typeof REPORT_TYPES)[number]["value"]>("suspicious_activity");
   const [description, setDescription] = useState("");
   const [locationName, setLocationName] = useState("");
+  const [reportTimeMode, setReportTimeMode] = useState<ReportTimeMode>("now");
+  const [customOccurredAt, setCustomOccurredAt] = useState(() => toDateTimeLocalValue(new Date()));
   const [anonymousMode, setAnonymousMode] = useState(true);
   const [reportMode, setReportMode] = useState<"quick" | "detailed">("quick");
   const [exactPin, setExactPin] = useState<ExactPin | null>(null);
@@ -332,6 +358,23 @@ export default function IncidentReportsPage() {
     return `${attachments.length} files attached`;
   }, [attachments]);
 
+  const occurredAtIso = useMemo(
+    () => resolveOccurredAtIso(reportTimeMode, customOccurredAt),
+    [customOccurredAt, reportTimeMode],
+  );
+
+  const reportTimeLabel = useMemo(() => {
+    if (reportTimeMode === "now") {
+      return "Happening now";
+    }
+
+    if (!occurredAtIso) {
+      return "Choose when it happened";
+    }
+
+    return new Date(occurredAtIso).toLocaleString();
+  }, [occurredAtIso, reportTimeMode]);
+
   const selectedLocationLabel = exactPin
     ? `${exactPin.latitude.toFixed(5)}, ${exactPin.longitude.toFixed(5)}`
     : "Drop a pin on the map to set the location";
@@ -340,6 +383,9 @@ export default function IncidentReportsPage() {
     setActiveNav(index);
     router.push(NAV_ITEMS[index].path);
   }
+
+  void activeNav;
+  void handleNavSelect;
 
   function handleLogout() {
     window.localStorage.removeItem("geopulse.token");
@@ -471,6 +517,21 @@ export default function IncidentReportsPage() {
       return;
     }
 
+    if (reportTimeMode === "custom" && !customOccurredAt) {
+      setStatusMessage({ type: "error", text: "Please choose the date and time the incident took place." });
+      return;
+    }
+
+    if (!occurredAtIso) {
+      setStatusMessage({ type: "error", text: "Please enter a valid incident date and time." });
+      return;
+    }
+
+    if (new Date(occurredAtIso).getTime() > Date.now()) {
+      setStatusMessage({ type: "error", text: "Incident time cannot be in the future." });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const title = `${selectedReportType.label}: ${locationName.trim()}`;
@@ -488,11 +549,12 @@ export default function IncidentReportsPage() {
         longitude: exactPin.longitude,
         coordinate_precision_meters: 25,
         route_hint: anonymousMode ? "Anonymous user report" : "User-submitted report",
-        occurred_at: new Date().toISOString(),
+        occurred_at: occurredAtIso,
         metadata: {
           anonymous: anonymousMode,
           attachments: attachments.map((file) => ({ name: file.name, type: file.type, size: file.size })),
           report_type_label: selectedReportType.label,
+          report_time_mode: reportTimeMode,
         },
       };
 
@@ -523,11 +585,12 @@ export default function IncidentReportsPage() {
           title,
           upload_source: "report",
           summary: description.trim(),
-          recorded_at: new Date().toISOString(),
+          recorded_at: occurredAtIso,
           metadata: {
             signal_id: signalId,
             anonymous: anonymousMode,
             location_name: locationName.trim(),
+            report_time_mode: reportTimeMode,
           },
         }),
       });
@@ -546,6 +609,8 @@ export default function IncidentReportsPage() {
       setExactPin(null);
       setAnonymousMode(true);
       setReportType("suspicious_activity");
+      setReportTimeMode("now");
+      setCustomOccurredAt(toDateTimeLocalValue(new Date()));
     } catch (error) {
       setStatusMessage({
         type: "error",
@@ -711,6 +776,54 @@ export default function IncidentReportsPage() {
                 </label>
               </div>
 
+              <div className="rounded-2xl border border-white/[0.06] bg-[#08101f] p-4">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400">Incident time</p>
+                    <p className="mt-1 text-sm font-semibold text-white">When did this happen?</p>
+                    <p className="mt-1 text-xs leading-5 text-white/40">
+                      Choose <strong>Now</strong> if the incident is happening currently, or switch to a custom date and time if you are reporting something that already happened.
+                    </p>
+                  </div>
+                  <div className="flex rounded-2xl border border-white/[0.08] bg-[#0A1020]/80 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setReportTimeMode("now")}
+                      className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+                        reportTimeMode === "now" ? "bg-cyan-500 text-[#07111f]" : "text-white/55 hover:text-white"
+                      }`}
+                    >
+                      Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportTimeMode("custom")}
+                      className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+                        reportTimeMode === "custom" ? "bg-cyan-500 text-[#07111f]" : "text-white/55 hover:text-white"
+                      }`}
+                    >
+                      Pick date & time
+                    </button>
+                  </div>
+                </div>
+
+                {reportTimeMode === "custom" ? (
+                  <label className="mt-4 block space-y-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">Date and time</span>
+                    <input
+                      type="datetime-local"
+                      value={customOccurredAt}
+                      max={toDateTimeLocalValue(new Date())}
+                      onChange={(e) => setCustomOccurredAt(e.target.value)}
+                      className="h-11 w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/90 px-3 text-sm text-white outline-none transition focus:border-cyan-400/50"
+                    />
+                    <p className="text-xs leading-5 text-white/35">
+                      Use your local time. We will store the exact timestamp for verification, decay, and incident ordering.
+                    </p>
+                  </label>
+                ) : null}
+              </div>
+
               <div className="flex flex-col gap-3 rounded-2xl border border-white/[0.06] bg-[#08101f] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400">Location help</p>
@@ -794,6 +907,10 @@ export default function IncidentReportsPage() {
                   <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">Suggested severity</p>
                   <p className="mt-2 text-sm text-white/80">{selectedPreset.severity}</p>
                 </div>
+                <div className="rounded-2xl border border-white/[0.06] bg-[#08101f] p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">Incident time</p>
+                  <p className="mt-2 text-sm text-white/80">{reportTimeLabel}</p>
+                </div>
                 {!isQuickMode ? (
                   <div className="rounded-2xl border border-white/[0.06] bg-[#08101f] p-4">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">Evidence</p>
@@ -861,6 +978,7 @@ export default function IncidentReportsPage() {
                 <div className="mt-3 space-y-2 text-sm text-white/75">
                   <p>{selectedReportType.label}</p>
                   <p className="text-white/45">{locationName.trim() || "No location name yet"}</p>
+                  <p className="text-white/45">{reportTimeLabel}</p>
                   <p className="text-white/45">{exactPin ? `${exactPin.latitude.toFixed(5)}, ${exactPin.longitude.toFixed(5)}` : "No pin selected"}</p>
                   {isQuickMode ? (
                     <p className="text-white/35">

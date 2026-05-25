@@ -18,6 +18,9 @@ type UserProfile = {
   is_verified: boolean;
   date_joined: string;
   profile_picture?: string;
+  watched_areas: string[];
+  saved_routes: string[];
+  minimum_alert_severity: "low" | "medium" | "high" | "critical";
 };
 
 type ReportHistoryItem = {
@@ -27,14 +30,6 @@ type ReportHistoryItem = {
   created_at: string;
   verified: boolean;
   accuracy_score?: number;
-};
-
-type SavedRoute = {
-  id: number;
-  name: string;
-  origin: string;
-  destination: string;
-  created_at: string;
 };
 
 type SourceProfileRecord = {
@@ -164,6 +159,21 @@ function parseCurrentUserProfile(payload: unknown): { profile: UserProfile; user
   const username = pickString(payload.username, "User");
   const name = displayName || fullName || username;
   const role = parseAppRole(profile?.role);
+  const metadata = isObjectRecord(profile?.metadata) ? profile.metadata : null;
+  const watchedAreas = Array.isArray(metadata?.watched_areas)
+    ? metadata.watched_areas.map((item) => pickString(item).trim()).filter(Boolean)
+    : [];
+  const savedRoutes = Array.isArray(metadata?.saved_routes)
+    ? metadata.saved_routes.map((item) => pickString(item).trim()).filter(Boolean)
+    : [];
+  const minimumAlertSeverityRaw = pickString(metadata?.minimum_alert_severity, "medium");
+  const minimumAlertSeverity =
+    minimumAlertSeverityRaw === "low" ||
+    minimumAlertSeverityRaw === "medium" ||
+    minimumAlertSeverityRaw === "high" ||
+    minimumAlertSeverityRaw === "critical"
+      ? minimumAlertSeverityRaw
+      : "medium";
 
   return {
     userId: pickNumber(payload.id),
@@ -178,8 +188,18 @@ function parseCurrentUserProfile(payload: unknown): { profile: UserProfile; user
       is_verified: ["trusted_verifier", "analyst", "admin"].includes(role),
       date_joined: pickString(profile?.created_at, ""),
       profile_picture: undefined,
+      watched_areas: watchedAreas,
+      saved_routes: savedRoutes,
+      minimum_alert_severity: minimumAlertSeverity,
     },
   };
+}
+
+function parseCommaSeparatedList(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function parseSourceProfiles(payload: unknown): SourceProfileRecord[] {
@@ -286,7 +306,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [role, setRole] = useState<AppRole>("regular_user");
+  const [role, setRole] = useState<AppRole>(() => getCurrentRole());
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
   );
@@ -294,7 +314,6 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [trustMetrics, setTrustMetrics] = useState<TrustMetrics | null>(null);
   const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
-  const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
   const [loading, setLoading] = useState(Boolean(authToken));
   const [activeTab, setActiveTab] = useState("account");
   const [applying, setApplying] = useState(false);
@@ -303,14 +322,16 @@ export default function ProfilePage() {
   const [locationBusy, setLocationBusy] = useState(false);
   const [locationStatusMessage, setLocationStatusMessage] = useState<string | null>(null);
   const [savedLocation, setSavedLocation] = useState<UserLocation | null>(() => getStoredUserLocation());
+  const [watchedAreasInput, setWatchedAreasInput] = useState("");
+  const [savedRoutesInput, setSavedRoutesInput] = useState("");
+  const [minimumAlertSeverity, setMinimumAlertSeverity] = useState<UserProfile["minimum_alert_severity"]>("medium");
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
+  const [preferencesError, setPreferencesError] = useState<string | null>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
-    setRole(getCurrentRole());
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -391,6 +412,55 @@ export default function ProfilePage() {
     }
   }, [authToken, canApplyCommunityReporter]);
 
+  const handleSaveAlertPreferences = useCallback(async () => {
+    if (!authToken) return;
+
+    setPreferencesSaving(true);
+    setPreferencesMessage(null);
+    setPreferencesError(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/me/`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Token ${authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          metadata: {
+            watched_areas: parseCommaSeparatedList(watchedAreasInput),
+            saved_routes: parseCommaSeparatedList(savedRoutesInput),
+            minimum_alert_severity: minimumAlertSeverity,
+          },
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as unknown;
+      if (!response.ok) {
+        setPreferencesError("Unable to save alert preferences right now.");
+        return;
+      }
+
+      const parsedUser = parseCurrentUserProfile(payload);
+      if (parsedUser) {
+        setProfile(parsedUser.profile);
+        setRole(parsedUser.profile.role);
+        setWatchedAreasInput(parsedUser.profile.watched_areas.join(", "));
+        setSavedRoutesInput(parsedUser.profile.saved_routes.join(", "));
+        setMinimumAlertSeverity(parsedUser.profile.minimum_alert_severity);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("geopulse.user", JSON.stringify(payload));
+        }
+      }
+
+      setPreferencesMessage("Alert targeting preferences saved.");
+    } catch {
+      setPreferencesError("Unable to save alert preferences right now.");
+    } finally {
+      setPreferencesSaving(false);
+    }
+  }, [authToken, minimumAlertSeverity, savedRoutesInput, watchedAreasInput]);
+
   useEffect(() => {
     if (!authToken) return;
     let active = true;
@@ -418,6 +488,9 @@ export default function ProfilePage() {
             currentUsername = parsedUser.username;
             setRole(parsedUser.profile.role);
             setProfile(parsedUser.profile);
+            setWatchedAreasInput(parsedUser.profile.watched_areas.join(", "));
+            setSavedRoutesInput(parsedUser.profile.saved_routes.join(", "));
+            setMinimumAlertSeverity(parsedUser.profile.minimum_alert_severity);
           }
         }
 
@@ -706,23 +779,85 @@ export default function ProfilePage() {
           {/* Routes & Alerts Tab */}
           {activeTab === "routes" && (
             <div className="space-y-4">
+              <div className="rounded-2xl border border-white/[0.06] bg-[#08101F]/90 p-4">
+                <h3 className="mb-2 text-sm font-semibold text-white">Alert Targeting</h3>
+                <p className="text-xs text-white/45">
+                  Choose which areas and route labels should receive alerts for this account.
+                </p>
+
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <label className="block text-xs text-white/50">Watched areas</label>
+                    <p className="mt-1 text-[11px] text-white/35">Separate states or areas with commas.</p>
+                    <input
+                      value={watchedAreasInput}
+                      onChange={(event) => setWatchedAreasInput(event.target.value)}
+                      placeholder="Lagos, Ogun, FCT Abuja"
+                      className="mt-2 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/40"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-white/50">Saved routes</label>
+                    <p className="mt-1 text-[11px] text-white/35">Use simple route names that match your travel corridors.</p>
+                    <input
+                      value={savedRoutesInput}
+                      onChange={(event) => setSavedRoutesInput(event.target.value)}
+                      placeholder="Lekki - Epe, Airport Road"
+                      className="mt-2 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/40"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-white/50">Minimum alert severity</label>
+                    <select
+                      value={minimumAlertSeverity}
+                      onChange={(event) => setMinimumAlertSeverity(event.target.value as UserProfile["minimum_alert_severity"])}
+                      className="mt-2 w-full rounded-xl border border-white/[0.08] bg-[#08101F] px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/40"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveAlertPreferences()}
+                      disabled={preferencesSaving}
+                      className="rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:border-white/[0.08] disabled:bg-white/[0.03] disabled:text-white/40"
+                    >
+                      {preferencesSaving ? "Saving..." : "Save alert preferences"}
+                    </button>
+                    <span className="text-xs text-white/40">
+                      Alerts currently start at {minimumAlertSeverity}.
+                    </span>
+                  </div>
+
+                  {preferencesMessage ? <p className="text-xs text-emerald-300">{preferencesMessage}</p> : null}
+                  {preferencesError ? <p className="text-xs text-red-300">{preferencesError}</p> : null}
+                </div>
+              </div>
+
               {/* Saved Routes */}
               <div className="rounded-2xl border border-white/[0.06] bg-[#08101F]/90 p-4">
                 <h3 className="mb-4 text-sm font-semibold text-white">Saved Routes</h3>
-                {savedRoutes.length > 0 ? (
+                {profile?.saved_routes.length ? (
                   <div className="space-y-2">
-                    {savedRoutes.map((route) => (
-                      <div key={route.id} className="flex items-center justify-between rounded-lg border border-white/[0.04] bg-white/[0.02] p-3">
+                    {profile.saved_routes.map((route, index) => (
+                      <div key={`${route}-${index}`} className="flex items-center justify-between rounded-lg border border-white/[0.04] bg-white/[0.02] p-3">
                         <div className="flex min-w-0 flex-1 items-center gap-3">
                           <div className="flex-shrink-0 text-cyan-300">{I.map}</div>
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white">{route.name}</p>
+                            <p className="truncate text-sm font-medium text-white">{route}</p>
                             <p className="mt-0.5 truncate text-xs text-white/40">
-                              {route.origin} → {route.destination}
+                              Used to match route-specific alert delivery
                             </p>
                           </div>
                         </div>
-                        <button className="flex-shrink-0 text-white/30 hover:text-white/50">{I.chevronRight}</button>
+                        <span className="flex-shrink-0 text-white/30">{I.chevronRight}</span>
                       </div>
                     ))}
                   </div>
@@ -736,24 +871,24 @@ export default function ProfilePage() {
                 <h3 className="mb-4 text-sm font-semibold text-white">Alert Preferences</h3>
                 <div className="space-y-3">
                   <label className="flex items-center gap-3 rounded-lg border border-white/[0.04] bg-white/[0.02] p-3">
-                    <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-white/20 accent-cyan-400" />
+                    <input type="checkbox" checked readOnly className="h-4 w-4 rounded border-white/20 accent-cyan-400" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-white">Nearby Incidents</p>
-                      <p className="mt-0.5 text-xs text-white/40">Get alerts for incidents near you</p>
+                      <p className="mt-0.5 text-xs text-white/40">Delivery is scoped by your watched areas and region.</p>
                     </div>
                   </label>
                   <label className="flex items-center gap-3 rounded-lg border border-white/[0.04] bg-white/[0.02] p-3">
-                    <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-white/20 accent-cyan-400" />
+                    <input type="checkbox" checked={Boolean(profile?.saved_routes.length)} readOnly className="h-4 w-4 rounded border-white/20 accent-cyan-400" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-white">Route Warnings</p>
-                      <p className="mt-0.5 text-xs text-white/40">Alerts for saved routes</p>
+                      <p className="mt-0.5 text-xs text-white/40">Enabled when one or more saved route labels are present.</p>
                     </div>
                   </label>
                   <label className="flex items-center gap-3 rounded-lg border border-white/[0.04] bg-white/[0.02] p-3">
-                    <input type="checkbox" className="h-4 w-4 rounded border-white/20 accent-cyan-400" />
+                    <input type="checkbox" checked={minimumAlertSeverity === "critical"} readOnly className="h-4 w-4 rounded border-white/20 accent-cyan-400" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-white">Critical Alerts Only</p>
-                      <p className="mt-0.5 text-xs text-white/40">Only high-severity incidents</p>
+                      <p className="mt-0.5 text-xs text-white/40">Turn this on by setting the minimum severity to critical above.</p>
                     </div>
                   </label>
                 </div>

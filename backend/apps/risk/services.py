@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.utils import timezone
 
+from apps.audit_logs.services import record_audit_event
 from apps.alerts.models import Alert
 from apps.signals.models import Signal, SignalStatus
 from config.geo import alert_location_payload, resolve_nigeria_state
@@ -76,9 +77,21 @@ def evaluate_watch_zone(watch_zone: WatchZone) -> WatchZone:
         rationale="Automatic risk refresh from nearby signal activity.",
         factors={"matched_signal_count": len(recent_signals)},
     )
+    if level != previous_level:
+        record_audit_event(
+            "risk.level_changed",
+            obj=watch_zone,
+            description=f"Watch zone '{watch_zone.name}' risk changed from {previous_level} to {level}.",
+            metadata={
+                "previous_level": previous_level,
+                "new_level": level,
+                "risk_score": float(watch_zone.current_risk_score),
+                "changed_by": "system",
+            },
+        )
     if level != previous_level and level != RiskLevel.BASELINE:
         location = resolve_nigeria_state(watch_zone.centroid_latitude, watch_zone.centroid_longitude)
-        Alert.objects.create(
+        alert = Alert.objects.create(
             watch_zone=watch_zone,
             severity=_risk_level_to_alert_severity(level),
             title=f"Risk changed for {watch_zone.name}",
@@ -90,6 +103,13 @@ def evaluate_watch_zone(watch_zone: WatchZone) -> WatchZone:
                 "previous_level": previous_level,
                 "new_level": level,
                 "risk_score": float(watch_zone.current_risk_score),
+                "issued_by": "system",
+                "targeting": {
+                    "location_radius_meters": watch_zone.metadata.get("radius_meters", 5000),
+                    "watched_areas": [location["state"]] if location["state"] else [],
+                    "saved_routes": [],
+                    "minimum_severity": _risk_level_to_alert_severity(level),
+                },
                 **alert_location_payload(
                     label=watch_zone.name,
                     latitude=location["latitude"],
@@ -97,6 +117,12 @@ def evaluate_watch_zone(watch_zone: WatchZone) -> WatchZone:
                     state=location["state"],
                 ),
             },
+        )
+        record_audit_event(
+            "alert.issued",
+            obj=alert,
+            description=f"Alert '{alert.title}' issued for watch zone risk change.",
+            metadata={"issued_by": "system", "watch_zone_id": watch_zone.pk},
         )
     return watch_zone
 

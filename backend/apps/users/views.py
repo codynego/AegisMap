@@ -91,6 +91,54 @@ class CurrentUserView(APIView):
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
+    def patch(self, request):
+        profile, _ = UserProfile.objects.get_or_create(
+            user=request.user,
+            defaults={"role": UserRole.REGULAR_USER},
+        )
+
+        payload = request.data if isinstance(request.data, dict) else {}
+        next_metadata = dict(profile.metadata or {})
+        incoming_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+
+        watched_areas = incoming_metadata.get("watched_areas")
+        if isinstance(watched_areas, list):
+            next_metadata["watched_areas"] = [
+                str(item).strip()
+                for item in watched_areas
+                if str(item).strip()
+            ]
+
+        saved_routes = incoming_metadata.get("saved_routes")
+        if isinstance(saved_routes, list):
+            next_metadata["saved_routes"] = [
+                str(item).strip()
+                for item in saved_routes
+                if str(item).strip()
+            ]
+
+        minimum_alert_severity = incoming_metadata.get("minimum_alert_severity")
+        if minimum_alert_severity in {"low", "medium", "high", "critical"}:
+            next_metadata["minimum_alert_severity"] = minimum_alert_severity
+
+        profile.metadata = next_metadata
+        profile.save(update_fields=["metadata", "updated_at"])
+
+        record_audit_event(
+            "profile.preferences_updated",
+            actor=request.user,
+            request=request,
+            obj=profile,
+            description=f"User '{request.user.username}' updated alert targeting preferences.",
+            metadata={
+                "watched_areas_count": len(next_metadata.get("watched_areas", [])),
+                "saved_routes_count": len(next_metadata.get("saved_routes", [])),
+                "minimum_alert_severity": next_metadata.get("minimum_alert_severity"),
+            },
+        )
+
+        return Response(UserSerializer(request.user).data, status=status.HTTP_200_OK)
+
 
 class ApplyCommunityReporterView(APIView):
     permission_classes = [IsAuthenticated]

@@ -103,3 +103,39 @@ class CommunityReporterApplicationTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.role, UserRole.REGULAR_USER)
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class CurrentUserPreferenceTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="prefs_user",
+            email="prefs@example.com",
+            password="strongpass123",
+        )
+        self.profile = UserProfile.objects.create(
+            user=self.user,
+            role=UserRole.COMMUNITY_REPORTER,
+            metadata={},
+        )
+        token = Token.objects.create(user=self.user)
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Token {token.key}"
+
+    def test_user_can_patch_own_alert_preferences(self):
+        response = self.client.patch(
+            "/api/auth/me/",
+            {
+                "metadata": {
+                    "watched_areas": ["Lagos", "Ogun"],
+                    "saved_routes": ["Lekki - Epe", "Abuja Airport Road"],
+                    "minimum_alert_severity": "high",
+                }
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.metadata["watched_areas"], ["Lagos", "Ogun"])
+        self.assertEqual(self.profile.metadata["saved_routes"], ["Lekki - Epe", "Abuja Airport Road"])
+        self.assertEqual(self.profile.metadata["minimum_alert_severity"], "high")

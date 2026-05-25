@@ -20,11 +20,12 @@ class PatternStatus(models.TextChoices):
 
 
 class IncidentStatus(models.TextChoices):
-    OPEN = "open", "Open"
-    MONITORING = "monitoring", "Monitoring"
-    CONTAINED = "contained", "Contained"
+    UNCONFIRMED = "unconfirmed", "Unconfirmed"
+    PROBABLE = "probable", "Probable"
+    VERIFIED = "verified", "Verified"
+    ACTIVE = "active", "Active"
     RESOLVED = "resolved", "Resolved"
-    DISMISSED = "dismissed", "Dismissed"
+    ARCHIVED = "archived", "Archived"
 
 
 class SignalCluster(models.Model):
@@ -157,7 +158,7 @@ class Incident(models.Model):
     status = models.CharField(
         max_length=16,
         choices=IncidentStatus.choices,
-        default=IncidentStatus.OPEN,
+        default=IncidentStatus.UNCONFIRMED,
     )
     location_name = models.CharField(max_length=255, blank=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)

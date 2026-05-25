@@ -2,6 +2,7 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -10,6 +11,7 @@ from apps.users.permissions import AllowCreateAuthenticatedReadAnalystWrite
 from apps.users.permissions import IsAnalystOrAdmin
 from apps.users.permissions import can_submit_public_verification, get_user_role, is_analyst_or_admin, is_internal_user, is_trusted_reporter
 from apps.users.models import UserRole
+from apps.users.services import is_user_temporarily_restricted, penalize_false_report
 
 from .analytics import build_signal_analytics
 from .ingestion import process_ingestion_job
@@ -84,7 +86,7 @@ class SignalViewSet(viewsets.ModelViewSet):
                     ConfidenceLevel.EMERGING,
                     ConfidenceLevel.DISPUTED,
                 ],
-            ).exclude(status=SignalStatus.DISMISSED)
+            ).exclude(status=SignalStatus.DISMISSED).exclude(verification_events__user=user).distinct()
 
         if can_submit_public_verification(user):
             return queryset.filter(
@@ -96,25 +98,33 @@ class SignalViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         submitted_by = self.request.user if self.request.user.is_authenticated else None
+        if submitted_by and is_user_temporarily_restricted(submitted_by):
+            raise PermissionDenied("Your reporting access is temporarily restricted pending admin review.")
         signal = serializer.save(submitted_by=submitted_by)
         dispatch_signal_pipeline(signal)
-        # create a corresponding Incident record for every submitted signal
+        signal.refresh_from_db()
+        # create a verification-tracking incident for stand-alone reports only.
         try:
-            Incident.objects.get_or_create(
-                primary_signal=signal,
-                defaults={
-                    "title": signal.title,
-                    "incident_type": signal.category,
-                    "confidence": signal.confidence if signal.confidence else "corroborated",
-                    "severity": signal.severity or "low",
-                    "status": "open",
-                    "location_name": signal.location_name or "",
-                    "latitude": signal.latitude,
-                    "longitude": signal.longitude,
-                    "summary": signal.description or "",
-                    "metadata": {**(signal.metadata or {}), "created_from_signal": str(signal.id)},
-                },
-            )
+            if not signal.metadata.get("duplicate_of") and not signal.cluster_id:
+                Incident.objects.get_or_create(
+                    primary_signal=signal,
+                    defaults={
+                        "title": signal.title,
+                        "incident_type": signal.category,
+                        "confidence": signal.confidence if signal.confidence else "raw",
+                        "severity": signal.severity or "low",
+                        "status": "unconfirmed",
+                        "location_name": signal.location_name or "",
+                        "latitude": signal.latitude,
+                        "longitude": signal.longitude,
+                        "summary": signal.description or "",
+                        "metadata": {
+                            **(signal.metadata or {}),
+                            "created_from_signal": str(signal.id),
+                            "signal_count": 1,
+                        },
+                    },
+                )
         except Exception:
             # if incident creation fails, don't block signal creation; record via audit
             record_audit_event(
@@ -169,6 +179,8 @@ class SignalViewSet(viewsets.ModelViewSet):
             request=request,
             description=f"Signal '{signal.title}' dismissed.",
         )
+        if request.data.get("false_report") and signal.source_profile_id:
+            penalize_false_report(signal.source_profile, reason="dismissed_false_report")
         return Response(self.get_serializer(signal).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
@@ -208,6 +220,8 @@ class SignalViewSet(viewsets.ModelViewSet):
             request=request,
             description=f"Signal '{signal.title}' rejected.",
         )
+        if signal.source_profile_id:
+            penalize_false_report(signal.source_profile, reason="analyst_rejected_report")
         return Response(self.get_serializer(signal).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
@@ -274,6 +288,8 @@ class SignalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def submit_verification(self, request, pk=None):
+        if is_user_temporarily_restricted(request.user):
+            raise PermissionDenied("Your verification access is temporarily restricted pending admin review.")
         signal = self.get_object()
         serializer = SignalVerificationSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

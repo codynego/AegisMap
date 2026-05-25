@@ -28,6 +28,11 @@ SEVERITY_RANK = {
 EARTH_METERS_PER_DEGREE = Decimal("111111")
 DUPLICATE_RADIUS_METERS = 250
 DUPLICATE_TIME_WINDOW_SECONDS = 45 * 60
+SENSITIVE_INCIDENT_TYPES = {
+    IncidentType.ARMED_ROBBERY,
+    IncidentType.KIDNAPPING,
+}
+DECAY_VISIBLE_HOURS = 24 * 14
 
 
 def _distance_within(signal_a: Signal, signal_b: Signal, radius_meters: int) -> bool:
@@ -258,29 +263,59 @@ def promote_pattern_to_incident(pattern: Pattern) -> Incident | None:
         reverse=True,
     )[0]
 
-    incident, _ = Incident.objects.get_or_create(
-        pattern=pattern,
-        defaults={
-            "title": f"{primary_signal.get_category_display()} incident",
-            "primary_signal": primary_signal,
-        },
-    )
+    incident = Incident.objects.filter(pattern=pattern).first()
+    if incident is None:
+        incident = (
+            Incident.objects.filter(primary_signal__in=signals)
+            .exclude(status=IncidentStatus.ARCHIVED)
+            .order_by("created_at")
+            .first()
+        )
+    if incident is None:
+        incident = Incident.objects.create(
+            pattern=pattern,
+            title=f"{primary_signal.get_category_display()} incident",
+            primary_signal=primary_signal,
+        )
+    else:
+        incident.pattern = pattern
     incident.primary_signal = primary_signal
     incident.incident_type = _map_signal_category_to_incident_type(primary_signal.category)
     incident.confidence = pattern.confidence
     incident.severity = pattern.severity
-    incident.status = IncidentStatus.OPEN
     incident.location_name = primary_signal.location_name
     incident.latitude = primary_signal.latitude
     incident.longitude = primary_signal.longitude
     incident.started_at = primary_signal.occurred_at or incident.started_at
     incident.summary = pattern.summary
-    incident.metadata = {**incident.metadata, "pattern_id": pattern.pk, "signal_count": len(signals)}
+    incident.metadata = {
+        **incident.metadata,
+        "pattern_id": pattern.pk,
+        "signal_count": len(signals),
+        "duplicate_report_count": _duplicate_report_count(signals),
+        "last_reconfirmed_at": timezone.now().isoformat(),
+        "decay_started_at": incident.metadata.get("decay_started_at") or timezone.now().isoformat(),
+    }
+    incident.status = derive_incident_status(
+        incident_type=incident.incident_type,
+        signal_count=len(signals),
+        confidence=incident.confidence,
+        severity=incident.severity,
+        verification_summary=primary_signal.metadata.get("verification_summary", {}),
+        admin_verified=bool(incident.metadata.get("manually_verified_by")),
+        resolved=incident.status == IncidentStatus.RESOLVED,
+        archived=incident.status == IncidentStatus.ARCHIVED,
+        promoted=True,
+    )
     incident.save()
 
     Signal.objects.filter(pk__in=[signal.pk for signal in signals]).update(status=SignalStatus.ESCALATED)
     pattern.status = PatternStatus.ESCALATED
     pattern.save(update_fields=["status", "updated_at"])
+    Incident.objects.filter(primary_signal__in=signals).exclude(pk=incident.pk).update(
+        status=IncidentStatus.ARCHIVED,
+        resolved_at=timezone.now(),
+    )
     record_audit_event(
         "incident.promoted",
         obj=incident,
@@ -315,6 +350,213 @@ def process_signal_intelligence(signal: Signal) -> dict:
         "pattern": pattern,
         "incident": incident,
     }
+
+
+def _duplicate_report_count(signals: list[Signal]) -> int:
+    total = 0
+    for signal in signals:
+        duplicates = signal.metadata.get("duplicate_signal_ids", [])
+        total += max(1, len(duplicates) + 1)
+    return total
+
+
+def build_incident_verification_summary(events: list[dict]) -> dict:
+    confirm_weight = sum(float(event.get("weight", 0) or 0) for event in events if event.get("response") == "confirm")
+    deny_weight = sum(float(event.get("weight", 0) or 0) for event in events if event.get("response") == "deny")
+    unsure_weight = sum(float(event.get("weight", 0) or 0) for event in events if event.get("response") == "unsure")
+    confirm_count = sum(1 for event in events if event.get("response") == "confirm")
+    deny_count = sum(1 for event in events if event.get("response") == "deny")
+    unsure_count = sum(1 for event in events if event.get("response") == "unsure")
+    trusted_confirmations = sum(
+        1
+        for event in events
+        if event.get("response") == "confirm" and float(event.get("weight", 0) or 0) >= 5
+    )
+    decisive = confirm_weight + deny_weight
+    consensus_ratio = round(confirm_weight / decisive, 4) if decisive > 0 else None
+    return {
+        "total_votes": len(events),
+        "confirm_count": confirm_count,
+        "deny_count": deny_count,
+        "unsure_count": unsure_count,
+        "confirm_weight": confirm_weight,
+        "deny_weight": deny_weight,
+        "unsure_weight": unsure_weight,
+        "trusted_confirmations": trusted_confirmations,
+        "consensus_ratio": consensus_ratio,
+    }
+
+
+def _map_incident_score_to_confidence(score: float) -> str:
+    if score >= 0.85:
+        return ConfidenceLevel.HIGH
+    if score >= 0.65:
+        return ConfidenceLevel.CORROBORATED
+    if score >= 0.45:
+        return ConfidenceLevel.EMERGING
+    if score >= 0.25:
+        return ConfidenceLevel.LOW
+    return ConfidenceLevel.RAW
+
+
+def calculate_incident_confidence_score(incident: Incident, verification_summary: dict) -> float:
+    metadata = incident.metadata or {}
+    primary_signal = incident.primary_signal
+
+    base_score = metadata.get("confidence_score")
+    if not isinstance(base_score, (int, float)) and primary_signal is not None:
+        signal_score = (primary_signal.metadata or {}).get("confidence_score")
+        if isinstance(signal_score, (int, float)):
+            base_score = float(signal_score)
+
+    if not isinstance(base_score, (int, float)):
+        base_score = {
+            ConfidenceLevel.HIGH: 0.9,
+            ConfidenceLevel.CORROBORATED: 0.72,
+            ConfidenceLevel.EMERGING: 0.55,
+            ConfidenceLevel.LOW: 0.35,
+            ConfidenceLevel.RAW: 0.2,
+        }.get(incident.confidence, 0.2)
+
+    confirm_weight = float(verification_summary.get("confirm_weight", 0) or 0)
+    deny_weight = float(verification_summary.get("deny_weight", 0) or 0)
+    decisive_total = confirm_weight + deny_weight
+    if decisive_total > 0:
+        net_consensus = (confirm_weight - deny_weight) / decisive_total
+        base_score += net_consensus * 0.18
+        base_score += min(0.12, decisive_total * 0.012)
+
+    confirm_count = int(verification_summary.get("confirm_count", 0) or 0)
+    if incident.incident_type in SENSITIVE_INCIDENT_TYPES and confirm_count < 2:
+        base_score = min(base_score, 0.6)
+
+    return max(0.0, min(1.0, round(base_score, 4)))
+
+
+def derive_incident_status(
+    *,
+    incident_type: str,
+    signal_count: int,
+    confidence: str,
+    severity: str,
+    verification_summary: dict,
+    admin_verified: bool = False,
+    resolved: bool = False,
+    archived: bool = False,
+    promoted: bool = False,
+) -> str:
+    if archived:
+        return IncidentStatus.ARCHIVED
+    if resolved:
+        return IncidentStatus.RESOLVED
+    if admin_verified:
+        return IncidentStatus.ACTIVE if severity in {SeverityLevel.HIGH, SeverityLevel.CRITICAL} or promoted else IncidentStatus.VERIFIED
+
+    trusted_confirmations = int(verification_summary.get("trusted_confirmations", 0) or 0)
+    confirm_count = int(verification_summary.get("confirm_count", 0) or 0)
+    confirm_weight = float(verification_summary.get("confirm_weight", 0) or 0)
+
+    if incident_type in SENSITIVE_INCIDENT_TYPES:
+        if signal_count >= 2 or trusted_confirmations >= 2 or confirm_weight >= 9:
+            return IncidentStatus.ACTIVE if severity in {SeverityLevel.HIGH, SeverityLevel.CRITICAL} or promoted else IncidentStatus.VERIFIED
+        if signal_count >= 1 or confirm_count >= 1 or confidence in {ConfidenceLevel.EMERGING, ConfidenceLevel.CORROBORATED}:
+            return IncidentStatus.PROBABLE
+        return IncidentStatus.UNCONFIRMED
+
+    if signal_count >= 3 or confidence == ConfidenceLevel.HIGH or trusted_confirmations >= 2:
+        return IncidentStatus.ACTIVE if severity in {SeverityLevel.HIGH, SeverityLevel.CRITICAL} or promoted else IncidentStatus.VERIFIED
+    if signal_count >= 2 or confidence == ConfidenceLevel.CORROBORATED or confirm_weight >= 5:
+        return IncidentStatus.PROBABLE
+    return IncidentStatus.UNCONFIRMED
+
+
+def recompute_incident_state(incident: Incident) -> Incident:
+    primary_signal = incident.primary_signal
+    metadata = incident.metadata or {}
+    verification_summary = metadata.get("verification_summary", {}) if isinstance(metadata.get("verification_summary", {}), dict) else {}
+    signal_count = int(metadata.get("signal_count", 1) or 1)
+    if primary_signal is not None:
+        signal_summary = (primary_signal.metadata or {}).get("verification_summary", {})
+        if not verification_summary and isinstance(signal_summary, dict):
+            verification_summary = signal_summary
+        if primary_signal.cluster_id:
+            signal_count = max(signal_count, primary_signal.cluster.signals.exclude(status=SignalStatus.DISMISSED).count())
+
+    confidence_score = calculate_incident_confidence_score(incident, verification_summary)
+    incident.confidence = _map_incident_score_to_confidence(confidence_score)
+
+    incident.status = derive_incident_status(
+        incident_type=incident.incident_type,
+        signal_count=signal_count,
+        confidence=incident.confidence,
+        severity=incident.severity,
+        verification_summary=verification_summary,
+        admin_verified=bool((incident.metadata or {}).get("manually_verified_by")),
+        resolved=incident.status == IncidentStatus.RESOLVED,
+        archived=incident.status == IncidentStatus.ARCHIVED,
+        promoted=bool(incident.pattern_id),
+    )
+    if incident.status in {IncidentStatus.VERIFIED, IncidentStatus.ACTIVE, IncidentStatus.RESOLVED}:
+        if not (incident.metadata or {}).get("decay_started_at"):
+            incident.metadata = {
+                **(incident.metadata or {}),
+                "decay_started_at": timezone.now().isoformat(),
+            }
+    incident.metadata = {
+        **(incident.metadata or {}),
+        "signal_count": signal_count,
+        "confidence_score": confidence_score,
+        "verification_summary": verification_summary,
+        "last_status_evaluated_at": timezone.now().isoformat(),
+    }
+    incident.save(update_fields=["confidence", "status", "metadata", "updated_at"])
+    return incident
+
+
+def recompute_incident_state_for_signal(signal: Signal) -> None:
+    for incident in Incident.objects.filter(primary_signal=signal):
+        recompute_incident_state(incident)
+
+
+def calculate_incident_visibility_score(incident: Incident) -> float:
+    metadata = incident.metadata or {}
+    if metadata.get("hidden_from_map"):
+        return 0.0
+    if incident.status == IncidentStatus.ARCHIVED:
+        return 0.0
+
+    if incident.status in {IncidentStatus.UNCONFIRMED, IncidentStatus.PROBABLE}:
+        return 1.0
+
+    decay_anchor_raw = metadata.get("last_reconfirmed_at") or metadata.get("decay_started_at")
+    if not decay_anchor_raw:
+        return 1.0
+
+    try:
+        decay_anchor = timezone.datetime.fromisoformat(decay_anchor_raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if timezone.is_naive(decay_anchor):
+        decay_anchor = timezone.make_aware(decay_anchor, timezone.get_current_timezone())
+
+    hours = max(0.0, (timezone.now() - decay_anchor).total_seconds() / 3600)
+    if hours >= DECAY_VISIBLE_HOURS:
+        return 0.0
+
+    remaining = 1 - (hours / DECAY_VISIBLE_HOURS)
+    if hours <= 6:
+        return 1.0
+    if hours <= 24:
+        return 0.92
+    if hours <= 72:
+        return 0.76
+    if hours <= 24 * 7:
+        return 0.48
+    return round(max(0.0, remaining * 0.3), 4)
+
+
+def should_display_incident_on_map(incident: Incident) -> bool:
+    return calculate_incident_visibility_score(incident) > 0
 
 
 def _map_signal_category_to_incident_type(category: str) -> str:

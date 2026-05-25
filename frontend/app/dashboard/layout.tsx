@@ -7,19 +7,22 @@ type DashboardLayoutProps = {
 };
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const hasToken =
+    mounted && typeof window !== "undefined" && !!window.localStorage.getItem("geopulse.token");
 
   useEffect(() => {
-    const token = window.localStorage.getItem("geopulse.token");
-    if (!token) {
-      window.location.replace("/login");
-      return;
-    }
-
-    setAuthorized(true);
+    const frame = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(frame);
   }, []);
 
-  if (authorized !== true) {
+  useEffect(() => {
+    if (mounted && !hasToken) {
+      window.location.replace("/login");
+    }
+  }, [hasToken, mounted]);
+
+  if (!mounted || !hasToken) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#060B16] text-white">
         <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] px-6 py-4 text-sm text-white/55">

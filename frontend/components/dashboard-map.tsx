@@ -67,6 +67,9 @@ const NIGERIA_STATES: { state: string; center: [number, number] }[] = [
   { state: "Zamfara", center: [6.2370, 12.1700] },
 ];
 
+const NIGERIA_DEFAULT_CENTER: [number, number] = [8.6753, 9.0820];
+const NIGERIA_DEFAULT_ZOOM = 6.2;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SearchOption = {
@@ -94,6 +97,7 @@ type IncidentPoint = {
   latitude: number;
   longitude: number;
   locationName: string;
+  visibilityScore?: number;
 };
 
 type WatchZonePoint = {
@@ -232,26 +236,38 @@ function getIncidentRecencyVisuals(
   incident: IncidentPoint,
   emphasizeRecentIncidents: boolean,
 ) {
+  const visibilityScore =
+    typeof incident.visibilityScore === "number" && Number.isFinite(incident.visibilityScore)
+      ? Math.max(0, Math.min(1, incident.visibilityScore))
+      : null;
+
   const detectedAtMs = new Date(incident.detectedAt).getTime();
   if (Number.isNaN(detectedAtMs)) {
     return {
-      opacity: emphasizeRecentIncidents ? 0.72 : 0.88,
+      opacity: visibilityScore ?? (emphasizeRecentIncidents ? 0.72 : 0.88),
       size: emphasizeRecentIncidents ? 11 : 12,
       glowAlpha: emphasizeRecentIncidents ? "66" : "88",
       ringOpacity: emphasizeRecentIncidents ? 0.82 : 0.9,
-      heatmapWeight: 1,
+      heatmapWeight: visibilityScore ?? 1,
     };
   }
 
   const ageHours = Math.max(0, (Date.now() - detectedAtMs) / (1000 * 60 * 60));
 
   if (!emphasizeRecentIncidents) {
-    return {
+    const fallback = {
       opacity: ageHours > 24 * 30 ? 0.76 : 0.88,
       size: ageHours > 24 * 30 ? 11 : 12,
       glowAlpha: ageHours > 24 * 30 ? "5c" : "82",
       ringOpacity: 0.86,
       heatmapWeight: ageHours > 24 * 30 ? 0.85 : 1,
+    };
+    if (visibilityScore === null) return fallback;
+    return {
+      ...fallback,
+      opacity: Math.max(0.12, visibilityScore),
+      heatmapWeight: Math.max(0.1, visibilityScore),
+      glowAlpha: visibilityScore >= 0.75 ? "82" : visibilityScore >= 0.4 ? "5c" : "36",
     };
   }
 
@@ -270,7 +286,14 @@ function getIncidentRecencyVisuals(
   if (ageHours <= 24 * 30) {
     return { opacity: 0.5, size: 10, glowAlpha: "4d", ringOpacity: 0.72, heatmapWeight: 0.5 };
   }
-  return { opacity: 0.34, size: 9, glowAlpha: "36", ringOpacity: 0.62, heatmapWeight: 0.32 };
+  const fallback = { opacity: 0.34, size: 9, glowAlpha: "36", ringOpacity: 0.62, heatmapWeight: 0.32 };
+  if (visibilityScore === null) return fallback;
+  return {
+    ...fallback,
+    opacity: Math.max(0.08, visibilityScore),
+    heatmapWeight: Math.max(0.05, visibilityScore),
+    glowAlpha: visibilityScore >= 0.75 ? "96" : visibilityScore >= 0.4 ? "5c" : "24",
+  };
 }
 
 function makeCircle(color: string, size: number, active: boolean): HTMLElement {
@@ -417,7 +440,7 @@ function makeTrackedPositionMarker(): HTMLElement {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function DashboardMap({
-  selectedState: initialState = "Lagos",
+  selectedState: initialState = "",
   selectedCity: initialCity = "",
   selectedStreet: initialStreet = "",
   zoom: initialZoom = 2,
@@ -485,9 +508,7 @@ export function DashboardMap({
   const selectedStateRef = useRef(initialState);
 
   const stateData = useMemo(
-    () =>
-      NIGERIA_STATES.find((s) => s.state === selectedState) ??
-      NIGERIA_STATES.find((s) => s.state === "Lagos")!,
+    () => NIGERIA_STATES.find((s) => s.state === selectedState) ?? null,
     [selectedState],
   );
   const stateZoom = 8.5;
@@ -498,7 +519,7 @@ export function DashboardMap({
   const focusCenter: [number, number] =
     exactPin
       ? [exactPin.longitude, exactPin.latitude]
-      : selectedAddress?.coordinates ?? stateData.center;
+      : selectedAddress?.coordinates ?? stateData?.center ?? NIGERIA_DEFAULT_CENTER;
 
   // ── Keep pinpointModeRef in sync ──
   useEffect(() => {
@@ -508,6 +529,11 @@ export function DashboardMap({
   useEffect(() => {
     selectedStateRef.current = selectedState;
   }, [selectedState]);
+
+  useEffect(() => {
+    setSelectedState(initialState);
+    selectedStateRef.current = initialState;
+  }, [initialState]);
 
   // ── Inject keyframe animations once ──
   useEffect(() => {
@@ -573,7 +599,7 @@ export function DashboardMap({
       container: containerRef.current,
       style: styleRef.current,
       center: focusCenter,
-      zoom: toMapZoom(zoomLevel),
+      zoom: selectedAddress || exactPin ? toMapZoom(zoomLevel) : stateData ? stateZoom : NIGERIA_DEFAULT_ZOOM,
       pitch: 38,
       bearing: -12,
       antialias: true,
@@ -658,7 +684,7 @@ export function DashboardMap({
     focusKeyRef.current = nextFocusKey;
     map.flyTo({
       center: focusCenter,
-      zoom: selectedAddress ? toMapZoom(zoomLevel) : stateZoom,
+      zoom: selectedAddress ? toMapZoom(zoomLevel) : stateData ? stateZoom : NIGERIA_DEFAULT_ZOOM,
       speed: 0.85,
       curve: 1.2,
       essential: true,
@@ -1056,7 +1082,7 @@ export function DashboardMap({
     markersRef.current = [];
 
     const sm = new mapboxgl.Marker({ element: makeCircle("#4cd7f6", !selectedAddress ? 22 : 16, !selectedAddress), anchor: "center" })
-      .setLngLat(stateData.center)
+      .setLngLat(stateData?.center ?? NIGERIA_DEFAULT_CENTER)
       .addTo(map);
     markersRef.current.push(sm);
 
@@ -1146,7 +1172,7 @@ export function DashboardMap({
     setSelectedState(nextState);
     selectedStateRef.current = nextState;
     setSelectedAddress(null);
-    setAddressQuery(nextState);
+    setAddressQuery(nextState || "Nigeria");
     setAddressOptions([]);
     setIsAddressSuggestionOpen(false);
     onStateChange?.(nextState);
@@ -1644,6 +1670,9 @@ function ControlsContent({
                 onChange={(e) => onStateChange(e.target.value)}
                 className={inputCls}
               >
+                <option value="" className="bg-[#0d1426]">
+                  All states
+                </option>
                 {NIGERIA_STATES.map((state) => (
                   <option key={state.state} value={state.state} className="bg-[#0d1426]">
                     {state.state}

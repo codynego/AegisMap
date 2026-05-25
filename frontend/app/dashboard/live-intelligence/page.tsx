@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole } from "@/lib/access";
+import { stateForCoordinates } from "@/lib/user-location";
 import {
   formatReportType,
   normalizeReportType,
@@ -35,6 +36,10 @@ type IncidentRecord = {
   summary: string;
   detected_at: string;
   created_at: string;
+  visibility_score?: number;
+  metadata?: {
+    location_state?: string;
+  };
 };
 
 type WatchZoneRecord = {
@@ -44,6 +49,9 @@ type WatchZoneRecord = {
   current_risk_score: number | string | null;
   centroid_latitude: number | string | null;
   centroid_longitude: number | string | null;
+  metadata?: {
+    location_state?: string;
+  };
 };
 
 type GeofenceRecord = {
@@ -55,6 +63,9 @@ type GeofenceRecord = {
   centroid_longitude: number | string | null;
   radius_meters: number | string | null;
   description: string;
+  metadata?: {
+    location_state?: string;
+  };
 };
 
 type ApiListResponse<T> = {
@@ -79,6 +90,7 @@ type SelectedIncident = {
   latitude: number;
   longitude: number;
   locationName: string;
+  locationState?: string;
 };
 
 type DatePreset = "all" | "today" | "7d" | "30d" | "custom";
@@ -121,6 +133,27 @@ function toNumber(value: number | string | null | undefined) {
 
 function getList<T>(payload: T[] | ApiListResponse<T>) {
   return Array.isArray(payload) ? payload : payload.results ?? [];
+}
+
+async function fetchAllPages<T>(url: string, headers: HeadersInit) {
+  const items: T[] = [];
+  let nextUrl: string | null = url;
+
+  while (nextUrl) {
+    const response = await fetch(nextUrl, { headers });
+    if (!response.ok) {
+      throw new Error(`Failed to load ${nextUrl}`);
+    }
+
+    const payload = (await response.json()) as
+      | (ApiListResponse<T> & { next?: string | null })
+      | T[];
+
+    items.push(...getList(payload));
+    nextUrl = Array.isArray(payload) ? null : payload.next ?? null;
+  }
+
+  return items;
 }
 
 function haversineKilometers(
@@ -617,21 +650,20 @@ export default function LiveIntelligencePage() {
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(1);
-  const [selectedState, setSelectedState] = useState("Lagos");
+  const [selectedState, setSelectedState] = useState("");
   const [selectedCity, setSelectedCity] = useState("");
   const [selectedStreet, setSelectedStreet] = useState("");
   const [zoom, setZoom] = useState(3);
   const [mapStyle, setMapStyle] = useState("mapbox://styles/mapbox/dark-v11");
   const [exactPin, setExactPin] = useState<ExactPin | null>(null);
   const [mapFocus, setMapFocus] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [authToken] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : window.localStorage.getItem("geopulse.token"),
-  );
+  const [authReady, setAuthReady] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const [incidents, setIncidents] = useState<IncidentRecord[]>([]);
   const [watchZones, setWatchZones] = useState<WatchZoneRecord[]>([]);
   const [geofences, setGeofences] = useState<GeofenceRecord[]>([]);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
-  const [loadingIntel, setLoadingIntel] = useState(Boolean(authToken));
+  const [loadingIntel, setLoadingIntel] = useState(true);
   const [selectedIncident, setSelectedIncident] = useState<SelectedIncident | null>(null);
   const [rightMode, setRightMode] = useState<"controls" | "incident" | "filter">("controls");
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
@@ -657,46 +689,47 @@ export default function LiveIntelligencePage() {
   }, []);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (typeof window === "undefined") return;
+    setAuthToken(window.localStorage.getItem("geopulse.token"));
+    setAuthReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (!authToken) {
+      setLoadingIntel(false);
+      return;
+    }
     let active = true;
     const headers = { Authorization: `Token ${authToken}` };
 
     async function loadIntel() {
       setLoadingIntel(true);
       try {
-        const [iRes, wRes, gRes, aRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/incidents/`, { headers }),
-          fetch(`${API_BASE_URL}/watch-zones/`, { headers }),
-          fetch(`${API_BASE_URL}/geofences/?status=active`, { headers }),
-          fetch(`${API_BASE_URL}/alerts/`, { headers }),
+        const [incidentItems, watchZoneItems, geofenceItems, alertItems] = await Promise.all([
+          fetchAllPages<IncidentRecord>(`${API_BASE_URL}/incidents/`, headers),
+          fetchAllPages<WatchZoneRecord>(`${API_BASE_URL}/watch-zones/`, headers),
+          fetchAllPages<GeofenceRecord>(`${API_BASE_URL}/geofences/?status=active`, headers),
+          fetchAllPages<Record<string, unknown>>(`${API_BASE_URL}/alerts/`, headers),
         ]);
         if (!active) return;
 
-        const [iData, wData, gData, aData] = await Promise.all([
-          iRes.json(),
-          wRes.json(),
-          gRes.json(),
-          aRes.json(),
-        ]);
-
-        if (iRes.ok) setIncidents(getList(iData));
-        if (wRes.ok) setWatchZones(getList(wData));
-        if (gRes.ok) setGeofences(getList(gData));
-        if (aRes.ok) {
-          const mapped = getList(aData as ApiListResponse<Record<string, unknown>>).map((a, idx) => {
-            const sev = String(a.severity ?? "info").toLowerCase();
-            return {
-              id: Number(a.id ?? idx + 1),
-              level: sev === "critical" ? "Critical" : sev === "high" ? "Warning" : "Info",
-              time: relativeTime(String(a.triggered_at ?? "")),
-              triggeredAt: String(a.triggered_at ?? ""),
-              title: String(a.title ?? "Operational alert"),
-              body: String(a.message ?? "No message provided."),
-              meta: String(a.status ?? "ACTIVE").toUpperCase(),
-            };
-          });
-          setAlerts(mapped);
-        }
+        setIncidents(incidentItems);
+        setWatchZones(watchZoneItems);
+        setGeofences(geofenceItems);
+        const mapped = alertItems.map((a, idx) => {
+          const sev = String(a.severity ?? "info").toLowerCase();
+          return {
+            id: Number(a.id ?? idx + 1),
+            level: sev === "critical" ? "Critical" : sev === "high" ? "Warning" : "Info",
+            time: relativeTime(String(a.triggered_at ?? "")),
+            triggeredAt: String(a.triggered_at ?? ""),
+            title: String(a.title ?? "Operational alert"),
+            body: String(a.message ?? "No message provided."),
+            meta: String(a.status ?? "ACTIVE").toUpperCase(),
+          };
+        });
+        setAlerts(mapped);
       } catch {
         if (!active) return;
       } finally {
@@ -708,7 +741,7 @@ export default function LiveIntelligencePage() {
     return () => {
       active = false;
     };
-  }, [authToken]);
+  }, [authReady, authToken]);
 
   const incidentPoints = useMemo(
     () =>
@@ -729,6 +762,8 @@ export default function LiveIntelligencePage() {
             latitude: lat,
             longitude: lng,
             locationName: inc.location_name,
+            visibilityScore: typeof inc.visibility_score === "number" ? inc.visibility_score : undefined,
+            locationState: inc.metadata?.location_state,
           },
         ];
       }),
@@ -738,7 +773,6 @@ export default function LiveIntelligencePage() {
   const activeRadiusKm = useMemo(() => {
     if (selectedStreet || exactPin) return 10;
     if (selectedCity) return 25;
-    if (selectedState) return 120;
     return null;
   }, [exactPin, selectedCity, selectedState, selectedStreet]);
 
@@ -750,6 +784,13 @@ export default function LiveIntelligencePage() {
 
       if (selectedReportType !== "all" && incident.incidentType !== selectedReportType) {
         return false;
+      }
+
+      if (selectedState) {
+        const incidentState = (incident.locationState || stateForCoordinates(incident.latitude, incident.longitude)).trim();
+        if (incidentState !== selectedState) {
+          return false;
+        }
       }
 
       if (!mapFocus || activeRadiusKm === null) {
@@ -773,6 +814,7 @@ export default function LiveIntelligencePage() {
     incidentPoints,
     mapFocus,
     selectedReportType,
+    selectedState,
   ]);
 
   const watchZonePoints = useMemo(
@@ -789,6 +831,7 @@ export default function LiveIntelligencePage() {
             riskScore: toNumber(zone.current_risk_score) ?? 0,
             latitude: lat,
             longitude: lng,
+            locationState: zone.metadata?.location_state,
           },
         ];
       }),
@@ -797,6 +840,13 @@ export default function LiveIntelligencePage() {
 
   const scopedWatchZonePoints = useMemo(() => {
     return watchZonePoints.filter((zone) => {
+      if (selectedState) {
+        const zoneState = (zone.locationState || stateForCoordinates(zone.latitude, zone.longitude)).trim();
+        if (zoneState !== selectedState) {
+          return false;
+        }
+      }
+
       if (!mapFocus || activeRadiusKm === null) {
         return true;
       }
@@ -810,7 +860,7 @@ export default function LiveIntelligencePage() {
         ) <= activeRadiusKm
       );
     });
-  }, [activeRadiusKm, mapFocus, watchZonePoints]);
+  }, [activeRadiusKm, mapFocus, selectedState, watchZonePoints]);
 
   const geofencePoints = useMemo(
     () =>
@@ -828,6 +878,7 @@ export default function LiveIntelligencePage() {
             radiusMeters: toNumber(geofence.radius_meters) ?? 0,
             latitude: lat,
             longitude: lng,
+            locationState: geofence.metadata?.location_state,
           },
         ];
       }),
@@ -836,6 +887,13 @@ export default function LiveIntelligencePage() {
 
   const scopedGeofencePoints = useMemo(() => {
     return geofencePoints.filter((geofence) => {
+      if (selectedState) {
+        const geofenceState = (geofence.locationState || stateForCoordinates(geofence.latitude, geofence.longitude)).trim();
+        if (geofenceState !== selectedState) {
+          return false;
+        }
+      }
+
       if (!mapFocus || activeRadiusKm === null) {
         return true;
       }
@@ -849,7 +907,7 @@ export default function LiveIntelligencePage() {
         ) <= activeRadiusKm
       );
     });
-  }, [activeRadiusKm, geofencePoints, mapFocus]);
+  }, [activeRadiusKm, geofencePoints, mapFocus, selectedState]);
 
   const reportTypeOptions = useMemo(() => {
     return [...REPORT_TYPE_VALUES];

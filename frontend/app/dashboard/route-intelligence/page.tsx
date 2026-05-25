@@ -24,6 +24,7 @@ type IncidentRecord = {
   summary: string;
   detected_at: string;
   created_at: string;
+  visibility_score?: number;
 };
 
 type WatchZoneRecord = {
@@ -70,6 +71,7 @@ type MapIncidentPoint = {
   latitude: number;
   longitude: number;
   locationName: string;
+  visibilityScore?: number;
 };
 
 type WatchZonePoint = {
@@ -1158,8 +1160,7 @@ export default function RouteIntelligencePage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeNav, setActiveNav] = useState(3);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems(getCurrentRole()));
+  const navItems = useMemo<NavItem[]>(() => getPublicNavItems(role), [role]);
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("planner");
 
@@ -1249,10 +1250,6 @@ export default function RouteIntelligencePage() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
-    setNavItems(getPublicNavItems(getCurrentRole()));
   }, []);
 
   useEffect(() => {
@@ -1390,6 +1387,7 @@ export default function RouteIntelligencePage() {
           latitude: lat,
           longitude: lng,
           locationName: inc.location_name,
+          visibilityScore: typeof inc.visibility_score === "number" ? inc.visibility_score : undefined,
         }];
       }),
     [incidents],
@@ -1446,7 +1444,6 @@ export default function RouteIntelligencePage() {
       try {
         const remote = await searchLocations(originInput, 5);
         if (!active) return;
-        const normalizedInput = originInput.trim().toLowerCase();
         const stateSuggestions = searchStateSuggestions(originInput, 5)
           .map((state) => ({ ...state, kind: "state" as const }));
         const localCities = mapCitySuggestions(
@@ -1480,7 +1477,7 @@ export default function RouteIntelligencePage() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [originInput, originSearchState, routeHubs]);
+  }, [mapCitySuggestions, originInput, originSearchState, routeHubs]);
 
   useEffect(() => {
     if (destinationInput.trim().length < 2) {
@@ -1491,7 +1488,6 @@ export default function RouteIntelligencePage() {
       try {
         const remote = await searchLocations(destinationInput, 5);
         if (!active) return;
-        const normalizedInput = destinationInput.trim().toLowerCase();
         const stateSuggestions = searchStateSuggestions(destinationInput, 5)
           .map((state) => ({ ...state, kind: "state" as const }));
         const localCities = mapCitySuggestions(
@@ -1525,7 +1521,7 @@ export default function RouteIntelligencePage() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [destinationInput, destinationSearchState, routeHubs]);
+  }, [destinationInput, destinationSearchState, mapCitySuggestions, routeHubs]);
 
   const origin = currentOriginHub ?? customOrigin ?? routeHubs.find((h) => h.id === originId) ?? routeHubs[0];
   const destination = customDestination ?? routeHubs.find((h) => h.id === destinationId) ?? routeHubs[1];
@@ -1800,7 +1796,6 @@ export default function RouteIntelligencePage() {
   }, []);
 
   const handleNav = useCallback((i: number) => {
-    setActiveNav(i);
     const next = navItems[i];
     if (next) {
       router.push(next.path);

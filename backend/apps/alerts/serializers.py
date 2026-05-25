@@ -102,6 +102,12 @@ class AlertSerializer(serializers.ModelSerializer):
         if is_analyst_or_admin(user):
             return data
 
+        if data.get("location_latitude") is not None:
+            data["location_latitude"] = round(float(data["location_latitude"]), 2)
+        if data.get("location_longitude") is not None:
+            data["location_longitude"] = round(float(data["location_longitude"]), 2)
+        data.pop("metadata", None)
+
         allowed_fields = {
             "id",
             "severity",

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 
 from apps.users.permissions import is_analyst_or_admin
 
@@ -69,12 +70,26 @@ class SignalSerializer(serializers.ModelSerializer):
     def get_verification_summary(self, obj):
         return obj.metadata.get("verification_summary", {})
 
+    def validate_occurred_at(self, value):
+        if value and value > timezone.now():
+            raise serializers.ValidationError("Occurred time cannot be in the future.")
+        return value
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get("request")
         user = getattr(request, "user", None)
         if is_analyst_or_admin(user):
             return data
+
+        if data.get("latitude") is not None:
+            data["latitude"] = round(float(data["latitude"]), 2)
+        if data.get("longitude") is not None:
+            data["longitude"] = round(float(data["longitude"]), 2)
+        data["location_name"] = data.get("location_name") or "Area withheld"
+        data.pop("metadata", None)
+        data.pop("submitted_by", None)
+        data.pop("source_profile", None)
 
         allowed_fields = {
             "id",

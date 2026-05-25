@@ -82,7 +82,8 @@ class AlertWorkflowTests(TestCase):
         response = self.client.get("/api/alerts/")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertTrue(any(item["id"] == alert.id and item["location_state"] == "FCT" for item in payload))
+        results = payload.get("results", payload)
+        self.assertTrue(any(item["id"] == alert.id and item["location_state"] == "FCT" for item in results))
 
     def test_alert_list_filters_by_state(self):
         Alert.objects.create(
@@ -101,5 +102,38 @@ class AlertWorkflowTests(TestCase):
         response = self.client.get("/api/alerts/?state=FCT")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(len(payload), 1)
-        self.assertEqual(payload[0]["title"], "FCT alert")
+        results = payload.get("results", payload)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "FCT alert")
+
+    def test_public_safety_summary_includes_safe_alerts_only(self):
+        safe_alert = Alert.objects.create(
+            title="Flood advisory",
+            message="Expect congestion and waterlogging.",
+            severity="high",
+            status="active",
+            metadata={
+                "location_name": "Lagos Island",
+                "location_state": "Lagos",
+                "location_latitude": 6.455,
+                "location_longitude": 3.384,
+            },
+        )
+        Alert.objects.create(
+            title="Suppressed alert",
+            message="Should not show publicly.",
+            severity="high",
+            status="suppressed",
+            metadata={"location_state": "Lagos"},
+        )
+
+        response = self.client.get("/api/public/safety-summary/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        results = payload["alerts"]
+        returned_ids = {item["id"] for item in results}
+        self.assertIn(safe_alert.id, returned_ids)
+        public_alert = next(item for item in results if item["id"] == safe_alert.id)
+        self.assertEqual(public_alert["location_name"], "Lagos area")
+        self.assertEqual(public_alert["location_latitude"], 6.5)
+        self.assertEqual(public_alert["location_longitude"], 3.4)

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
-import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
+import { getCurrentRole } from "@/lib/access";
 
 type DemoInsight = {
   title: string;
@@ -44,26 +44,11 @@ export default function AiPredictionsDemoPage() {
   const router = useRouter();
   const role = getCurrentRole();
   const [mounted, setMounted] = useState(false);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => getPublicNavItems(getCurrentRole()));
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
   }, []);
-
-  useEffect(() => {
-    setNavItems(getPublicNavItems(role));
-  }, [role]);
-
-  const handleNav = useCallback(
-    (index: number) => {
-      const next = navItems[index];
-      if (next) {
-        router.push(next.path);
-      }
-    },
-    [navItems, router],
-  );
 
   const handleLogout = useCallback(() => {
     window.localStorage.removeItem("geopulse.token");

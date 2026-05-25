@@ -356,11 +356,10 @@ export default function DashboardPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeNav, setActiveNav] = useState(0);
-  const [navItems, setNavItems] = useState<NavItem[]>(() => {
-    const r = getCurrentRole();
-    return isAnalystRole(r) ? INTERNAL_NAV_ITEMS : getPublicNavItems(r);
-  });
+  const navItems = useMemo<NavItem[]>(
+    () => (isAnalystRole(role) ? INTERNAL_NAV_ITEMS : getPublicNavItems(role)),
+    [role],
+  );
 
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
@@ -394,11 +393,6 @@ export default function DashboardPage() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
-    const r = getCurrentRole();
-    setNavItems(isAnalystRole(r) ? INTERNAL_NAV_ITEMS : getPublicNavItems(r));
   }, []);
 
   useEffect(() => {
@@ -498,7 +492,7 @@ export default function DashboardPage() {
       .filter(isVerified)
       .sort((a, b) => a.distanceKm - b.distanceKm)
       .slice(0, 5);
-  }, [anchor, currentArea.state, incidents]);
+  }, [anchor, currentArea.state, incidents, position]);
 
   const nearbyZones = useMemo(() => {
     if (!position) return [];
@@ -512,7 +506,7 @@ export default function DashboardPage() {
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, 4);
-  }, [anchor, currentArea.state, watchZones]);
+  }, [anchor, currentArea.state, position, watchZones]);
 
   const stateAlerts = useMemo(
     () => {
@@ -607,7 +601,6 @@ export default function DashboardPage() {
   }, []);
 
   const nav = useCallback((i: number) => {
-    setActiveNav(i);
     const next = navItems[i];
     if (next) {
       router.push(next.path);

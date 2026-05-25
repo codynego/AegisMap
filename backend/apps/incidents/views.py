@@ -1,5 +1,6 @@
 from django.db.models import Count, Q
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,7 +12,13 @@ from apps.users.models import UserRole
 
 from .models import Incident, Pattern, SignalCluster
 from .serializers import IncidentSerializer, PatternSerializer, SignalClusterSerializer
-from .services import promote_pattern_to_incident
+from .services import (
+    build_incident_verification_summary,
+    calculate_incident_visibility_score,
+    promote_pattern_to_incident,
+    recompute_incident_state,
+    should_display_incident_on_map,
+)
 
 
 class SignalClusterViewSet(viewsets.ModelViewSet):
@@ -103,6 +110,9 @@ class IncidentViewSet(viewsets.ModelViewSet):
         status_value = self.request.query_params.get("status")
         severity = self.request.query_params.get("severity")
         confidence = self.request.query_params.get("confidence")
+        location = (self.request.query_params.get("location") or "").strip()
+        date_from = (self.request.query_params.get("date_from") or "").strip()
+        date_to = (self.request.query_params.get("date_to") or "").strip()
 
         if incident_type:
             queryset = queryset.filter(incident_type=incident_type)
@@ -112,6 +122,22 @@ class IncidentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(severity=severity)
         if confidence:
             queryset = queryset.filter(confidence=confidence)
+        if location:
+            queryset = queryset.filter(
+                Q(location_name__icontains=location)
+                | Q(metadata__location_state__icontains=location)
+                | Q(pattern__geographic_hint__icontains=location)
+                | Q(primary_signal__location_name__icontains=location)
+                | Q(primary_signal__route_hint__icontains=location)
+            )
+        if date_from:
+            parsed_date_from = parse_date(date_from)
+            if parsed_date_from:
+                queryset = queryset.filter(detected_at__date__gte=parsed_date_from)
+        if date_to:
+            parsed_date_to = parse_date(date_to)
+            if parsed_date_to:
+                queryset = queryset.filter(detected_at__date__lte=parsed_date_to)
 
         # filter by administrative state (metadata or related objects may store location_state)
         state = (self.request.query_params.get("state") or "").strip()
@@ -125,17 +151,34 @@ class IncidentViewSet(viewsets.ModelViewSet):
 
         # support verification queue for analysts: when requested, return incidents needing confirmation
         verification_queue = self.request.query_params.get("verification_queue") == "true"
+        include_hidden = self.request.query_params.get("include_hidden") == "true" and is_analyst_or_admin(self.request.user)
         if verification_queue and is_analyst_or_admin(self.request.user):
-            queryset = queryset.filter(confidence__in=["raw", "low", "emerging", "corroborated"]).exclude(status="dismissed")
+            queryset = queryset.filter(status__in=["unconfirmed", "probable", "verified", "active"])
+            user_id = getattr(self.request.user, "id", None)
+            if user_id is not None:
+                hidden_ids = []
+                for incident in queryset:
+                    events = (incident.metadata or {}).get("verification_events", [])
+                    if any(event.get("user_id") == user_id for event in events if isinstance(event, dict)):
+                        hidden_ids.append(incident.pk)
+                if hidden_ids:
+                    queryset = queryset.exclude(pk__in=hidden_ids)
         elif not is_analyst_or_admin(self.request.user):
-            queryset = queryset.filter(confidence__in=["corroborated", "high"]).exclude(status="dismissed")
+            queryset = queryset.filter(status__in=["verified", "active", "resolved"])
+
+        if self.action == "list" and not include_hidden and not is_analyst_or_admin(self.request.user):
+            visible_ids = []
+            for incident in queryset:
+                if should_display_incident_on_map(incident):
+                    visible_ids.append(incident.pk)
+            queryset = queryset.filter(pk__in=visible_ids)
 
         return queryset
 
     @action(detail=True, methods=["post"])
     def monitor(self, request, pk=None):
         incident = self.get_object()
-        incident.status = "monitoring"
+        incident.status = "probable"
         incident.save(update_fields=["status", "updated_at"])
         record_audit_event(
             "incident.monitoring",
@@ -169,10 +212,17 @@ class IncidentViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Admins only."}, status=status.HTTP_403_FORBIDDEN)
 
         incident = self.get_object()
-        # set high confidence and open status
+        # set high confidence and verified status
         incident.confidence = "high"
-        incident.status = "open"
-        incident.metadata = {**incident.metadata, "approved_by": request.user.username if request.user and request.user.is_authenticated else None, "approved_at": timezone.now().isoformat()}
+        incident.metadata = {
+            **incident.metadata,
+            "approved_by": request.user.username if request.user and request.user.is_authenticated else None,
+            "approved_at": timezone.now().isoformat(),
+            "manually_verified_by": request.user.username if request.user and request.user.is_authenticated else None,
+            "last_reconfirmed_at": timezone.now().isoformat(),
+            "decay_started_at": incident.metadata.get("decay_started_at") or timezone.now().isoformat(),
+        }
+        recompute_incident_state(incident)
         incident.save(update_fields=["confidence", "status", "metadata", "updated_at"])
         record_audit_event(
             "incident.approved",
@@ -232,29 +282,18 @@ class IncidentViewSet(viewsets.ModelViewSet):
                 "submitted_at": timezone.now().isoformat(),
             })
 
-        # compute summary
-        confirm_weight = sum(e.get("weight", 0) for e in events if e.get("response") == "confirm")
-        deny_weight = sum(e.get("weight", 0) for e in events if e.get("response") == "deny")
-        unsure_count = sum(1 for e in events if e.get("response") == "unsure")
-        confirm_count = sum(1 for e in events if e.get("response") == "confirm")
-        deny_count = sum(1 for e in events if e.get("response") == "deny")
-        decisive = confirm_weight + deny_weight
-        consensus_ratio = float(confirm_weight / decisive) if decisive > 0 else None
+        summary = build_incident_verification_summary(events)
 
         incident.metadata = {
             **incident.metadata,
             "verification_events": events,
-            "verification_summary": {
-                "total_votes": len(events),
-                "confirm_count": confirm_count,
-                "deny_count": deny_count,
-                "unsure_count": unsure_count,
-                "confirm_weight": confirm_weight,
-                "deny_weight": deny_weight,
-                "consensus_ratio": consensus_ratio,
-            },
+            "verification_summary": summary,
         }
+        if resp == "confirm":
+            incident.metadata["last_reconfirmed_at"] = timezone.now().isoformat()
+            incident.metadata["decay_started_at"] = incident.metadata.get("decay_started_at") or timezone.now().isoformat()
         incident.save(update_fields=["metadata", "updated_at"])
+        recompute_incident_state(incident)
 
         record_audit_event(
             "incident.verification_submitted",
@@ -264,4 +303,72 @@ class IncidentViewSet(viewsets.ModelViewSet):
             description=f"Verification '{resp}' submitted for incident '{incident.title}'.",
         )
 
+        return Response(self.get_serializer(incident).data)
+
+    @action(detail=True, methods=["post"])
+    def downgrade(self, request, pk=None):
+        if get_user_role(request.user) != UserRole.ADMIN.value:
+            return Response({"detail": "Admins only."}, status=status.HTTP_403_FORBIDDEN)
+        incident = self.get_object()
+        next_status = (request.data.get("status") or "probable").strip().lower()
+        if next_status not in {"unconfirmed", "probable", "verified", "active", "resolved", "archived"}:
+            return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+        incident.status = next_status
+        incident.metadata = {
+            **(incident.metadata or {}),
+            "downgraded_by": request.user.username,
+            "downgraded_at": timezone.now().isoformat(),
+            "downgrade_reason": request.data.get("reason", ""),
+        }
+        incident.save(update_fields=["status", "metadata", "updated_at"])
+        record_audit_event(
+            "incident.downgraded",
+            actor=request.user,
+            obj=incident,
+            request=request,
+            description=f"Incident '{incident.title}' downgraded to {next_status}.",
+        )
+        return Response(self.get_serializer(incident).data)
+
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
+        if get_user_role(request.user) != UserRole.ADMIN.value:
+            return Response({"detail": "Admins only."}, status=status.HTTP_403_FORBIDDEN)
+        incident = self.get_object()
+        incident.status = "archived"
+        incident.metadata = {
+            **(incident.metadata or {}),
+            "archived_by": request.user.username,
+            "archived_at": timezone.now().isoformat(),
+        }
+        incident.save(update_fields=["status", "metadata", "updated_at"])
+        record_audit_event(
+            "incident.archived",
+            actor=request.user,
+            obj=incident,
+            request=request,
+            description=f"Incident '{incident.title}' archived.",
+        )
+        return Response(self.get_serializer(incident).data)
+
+    @action(detail=True, methods=["post"])
+    def remove_from_map(self, request, pk=None):
+        if get_user_role(request.user) != UserRole.ADMIN.value:
+            return Response({"detail": "Admins only."}, status=status.HTTP_403_FORBIDDEN)
+        incident = self.get_object()
+        incident.metadata = {
+            **(incident.metadata or {}),
+            "hidden_from_map": True,
+            "removed_from_map_by": request.user.username,
+            "removed_from_map_at": timezone.now().isoformat(),
+        }
+        incident.save(update_fields=["metadata", "updated_at"])
+        record_audit_event(
+            "incident.removed_from_map",
+            actor=request.user,
+            obj=incident,
+            request=request,
+            description=f"Incident '{incident.title}' removed from map.",
+            metadata={"visibility_score": calculate_incident_visibility_score(incident)},
+        )
         return Response(self.get_serializer(incident).data)

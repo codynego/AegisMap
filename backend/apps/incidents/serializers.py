@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from apps.users.permissions import is_analyst_or_admin
+
 from .models import Incident, Pattern, SignalCluster
 
 
@@ -52,6 +54,12 @@ class PatternSerializer(serializers.ModelSerializer):
 
 
 class IncidentSerializer(serializers.ModelSerializer):
+    visibility_score = serializers.SerializerMethodField()
+    hidden_from_map = serializers.SerializerMethodField()
+    signal_count = serializers.SerializerMethodField()
+    confidence_score = serializers.SerializerMethodField()
+    verification_summary = serializers.SerializerMethodField()
+
     class Meta:
         model = Incident
         fields = [
@@ -71,7 +79,66 @@ class IncidentSerializer(serializers.ModelSerializer):
             "resolved_at",
             "summary",
             "metadata",
+            "signal_count",
+            "confidence_score",
+            "verification_summary",
+            "visibility_score",
+            "hidden_from_map",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "detected_at", "created_at", "updated_at"]
+
+    def get_visibility_score(self, instance):
+        from .services import calculate_incident_visibility_score
+
+        return calculate_incident_visibility_score(instance)
+
+    def get_hidden_from_map(self, instance):
+        return bool((instance.metadata or {}).get("hidden_from_map"))
+
+    def get_signal_count(self, instance):
+        metadata = instance.metadata or {}
+        try:
+            return int(metadata.get("signal_count", 1) or 1)
+        except (TypeError, ValueError):
+            return 1
+
+    def get_confidence_score(self, instance):
+        metadata = instance.metadata or {}
+        score = metadata.get("confidence_score")
+        if isinstance(score, (int, float)):
+            return round(float(score) * 100, 2)
+
+        primary_signal = getattr(instance, "primary_signal", None)
+        if primary_signal is not None:
+            signal_score = (primary_signal.metadata or {}).get("confidence_score")
+            if isinstance(signal_score, (int, float)):
+                return round(float(signal_score) * 100, 2)
+        return None
+
+    def get_verification_summary(self, instance):
+        metadata = instance.metadata or {}
+        summary = metadata.get("verification_summary")
+        if isinstance(summary, dict):
+            return summary
+
+        primary_signal = getattr(instance, "primary_signal", None)
+        signal_summary = (getattr(primary_signal, "metadata", None) or {}).get("verification_summary")
+        return signal_summary if isinstance(signal_summary, dict) else {}
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if is_analyst_or_admin(user):
+            return data
+
+        if data.get("latitude") is not None:
+            data["latitude"] = round(float(data["latitude"]), 2)
+        if data.get("longitude") is not None:
+            data["longitude"] = round(float(data["longitude"]), 2)
+        data["location_name"] = data.get("location_name") or "Area withheld"
+        data.pop("metadata", None)
+        data.pop("primary_signal", None)
+        return data

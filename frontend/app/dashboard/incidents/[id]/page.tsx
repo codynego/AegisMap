@@ -5,6 +5,33 @@ import { useRouter, useParams } from "next/navigation";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole } from "@/lib/access";
 
+type IncidentDetail = {
+  id: number;
+  title: string;
+  summary: string;
+  incident_type: string;
+  confidence: string;
+  confidence_score?: number | null;
+  status: string;
+  location_name?: string;
+  detected_at?: string;
+  verification_summary?: {
+    total_votes?: number;
+    confirm_count?: number;
+    deny_count?: number;
+    unsure_count?: number;
+    trusted_confirmations?: number;
+  };
+};
+
+type PatrolUploadRecord = {
+  id: number;
+  title: string;
+  summary: string;
+  created_at: string;
+  incident?: number | null;
+};
+
 export default function IncidentDetailPage() {
   const router = useRouter();
   const params = useParams() as { id: string };
@@ -13,9 +40,9 @@ export default function IncidentDetailPage() {
 
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [incident, setIncident] = useState<any | null>(null);
-  const [patrolUploads, setPatrolUploads] = useState<any[]>([]);
-  const [availableUploads, setAvailableUploads] = useState<any[]>([]);
+  const [incident, setIncident] = useState<IncidentDetail | null>(null);
+  const [patrolUploads, setPatrolUploads] = useState<PatrolUploadRecord[]>([]);
+  const [availableUploads, setAvailableUploads] = useState<PatrolUploadRecord[]>([]);
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
   const [newFiles, setNewFiles] = useState<File[] | null>(null);
@@ -35,7 +62,9 @@ export default function IncidentDetailPage() {
       const incRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api"}/incidents/${incidentId}/`, {
         headers: authToken ? { Authorization: `Token ${authToken}` } : undefined,
       });
-      if (incRes.ok) setIncident(await incRes.json());
+      if (incRes.ok) {
+        setIncident((await incRes.json()) as IncidentDetail);
+      }
 
       // patrol uploads for this incident (API may paginate)
       const pRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api"}/patrol-uploads/?incident=${incidentId}`, {
@@ -43,7 +72,7 @@ export default function IncidentDetailPage() {
       });
       if (pRes.ok) {
         const data = await pRes.json();
-        const list = Array.isArray(data) ? data : data.results ?? [];
+        const list = (Array.isArray(data) ? data : data.results ?? []) as PatrolUploadRecord[];
         setPatrolUploads(list);
       }
 
@@ -54,8 +83,8 @@ export default function IncidentDetailPage() {
       if (aRes.ok) {
         const all = await aRes.json();
         // API may return paginated list or array; normalize
-        const list = Array.isArray(all) ? all : all.results ?? [];
-        setAvailableUploads(list.filter((u: any) => !u.incident));
+        const list = (Array.isArray(all) ? all : all.results ?? []) as PatrolUploadRecord[];
+        setAvailableUploads(list.filter((upload) => !upload.incident));
       }
     };
     void load();
@@ -104,7 +133,35 @@ export default function IncidentDetailPage() {
               <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/60 p-4">
                 <h3 className="text-lg font-semibold">{incident.title}</h3>
                 <p className="text-sm text-white/50">{incident.summary}</p>
-                <p className="mt-2 text-xs text-white/30">Type: {incident.incident_type}</p>
+                <p className="mt-2 text-xs text-white/30">
+                  Type: {incident.incident_type} · {incident.confidence} · {incident.status}
+                </p>
+                <p className="mt-1 text-xs text-white/30">
+                  {incident.location_name || "No location"}
+                  {incident.detected_at ? ` · ${new Date(incident.detected_at).toLocaleString()}` : ""}
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl bg-white/[0.03] px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-widest text-white/30">Verification votes</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">
+                      {incident.verification_summary?.total_votes ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-white/35">
+                      {incident.verification_summary?.confirm_count ?? 0} confirm ·{" "}
+                      {incident.verification_summary?.deny_count ?? 0} deny ·{" "}
+                      {incident.verification_summary?.unsure_count ?? 0} unsure
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-white/[0.03] px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-widest text-white/30">Confidence score</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">
+                      {typeof incident.confidence_score === "number" ? `${incident.confidence_score}%` : "—"}
+                    </div>
+                    <div className="mt-1 text-xs text-white/35">
+                      Trusted confirmations: {incident.verification_summary?.trusted_confirmations ?? 0}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="text-white/40">Loading incident…</div>

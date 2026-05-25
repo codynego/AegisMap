@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from apps.audit_logs.services import record_audit_event
 from apps.geofences.models import Geofence
 from apps.signals.models import Signal
 from config.geo import alert_location_payload, resolve_nigeria_state
@@ -47,8 +48,7 @@ def generate_geofence_alerts(signal: Signal) -> list[Alert]:
             title = f"Signal near {geofence.name}"
             if _alert_exists(title=title, geofence=geofence, signal=signal, minutes=180):
                 continue
-            created_alerts.append(
-                Alert.objects.create(
+            alert = Alert.objects.create(
                     geofence=geofence,
                     severity=signal.severity,
                     title=title,
@@ -60,6 +60,13 @@ def generate_geofence_alerts(signal: Signal) -> list[Alert]:
                         "signal_id": str(signal.pk),
                         "signal_confidence": signal.confidence,
                         "signal_category": signal.category,
+                        "issued_by": "system",
+                        "targeting": {
+                            "location_radius_meters": geofence.radius_meters,
+                            "watched_areas": [location["state"]] if location["state"] else [],
+                            "saved_routes": [signal.route_hint] if signal.route_hint else [],
+                            "minimum_severity": signal.severity,
+                        },
                         **alert_location_payload(
                             label=geofence.name,
                             latitude=location["latitude"],
@@ -68,6 +75,12 @@ def generate_geofence_alerts(signal: Signal) -> list[Alert]:
                         ),
                     },
                 )
+            created_alerts.append(alert)
+            record_audit_event(
+                "alert.issued",
+                obj=alert,
+                description=f"Alert '{alert.title}' issued for geofence match.",
+                metadata={"issued_by": "system", "signal_id": str(signal.pk)},
             )
     return created_alerts
 
@@ -86,8 +99,7 @@ def generate_rule_based_alerts(signal: Signal) -> list[Alert]:
         if _alert_exists(title=title, rule=rule, signal=signal, minutes=rule.window_minutes):
             continue
 
-        created_alerts.append(
-            Alert.objects.create(
+        alert = Alert.objects.create(
                 rule=rule,
                 cluster=signal.cluster,
                 severity=signal.severity,
@@ -100,6 +112,13 @@ def generate_rule_based_alerts(signal: Signal) -> list[Alert]:
                     "signal_id": str(signal.pk),
                     "matching_signal_count": nearby_count,
                     "signal_category": signal.category,
+                    "issued_by": "system",
+                    "targeting": {
+                        "location_radius_meters": rule.radius_meters,
+                        "watched_areas": [resolve_nigeria_state(signal.latitude, signal.longitude)["state"]] if signal.latitude is not None and signal.longitude is not None else [],
+                        "saved_routes": [signal.route_hint] if signal.route_hint else [],
+                        "minimum_severity": rule.min_severity,
+                    },
                     **alert_location_payload(
                         label=signal.location_name,
                         latitude=signal.latitude,
@@ -108,6 +127,12 @@ def generate_rule_based_alerts(signal: Signal) -> list[Alert]:
                     ),
                 },
             )
+        created_alerts.append(alert)
+        record_audit_event(
+            "alert.issued",
+            obj=alert,
+            description=f"Alert '{alert.title}' issued from rule '{rule.name}'.",
+            metadata={"issued_by": "system", "signal_id": str(signal.pk), "rule_id": rule.pk},
         )
     return created_alerts
 

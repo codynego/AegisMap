@@ -25,6 +25,20 @@ type SignalRecord = {
   created_at: string;
 };
 
+type IncidentQueueRecord = {
+  id: number | string;
+  title: string;
+  summary?: string | null;
+  incident_type: string;
+  confidence: string;
+  severity: string;
+  location_name?: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+  detected_at?: string | null;
+  created_at: string;
+};
+
 type ApiListResponse<T> = {
   results?: T[];
 };
@@ -122,7 +136,7 @@ export default function VerificationQueuePage() {
           const payload = await response.json();
           if (!active) return;
           // normalize incidents into SignalRecord-like shape for display
-          const items = (Array.isArray(payload) ? payload : payload.results ?? []).map((it: any) => ({
+          const items = (Array.isArray(payload) ? payload : payload.results ?? []).map((it: IncidentQueueRecord) => ({
             id: String(it.id),
             title: it.title,
             description: it.summary ?? "",

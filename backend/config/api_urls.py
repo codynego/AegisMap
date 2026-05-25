@@ -25,6 +25,7 @@ from apps.users.views import (
 )
 from config.docs import ApiDocsSummaryView, schema_view
 from config.operational import DashboardSummaryView, HealthCheckView
+from config.public_views import PublicSafetySummaryView
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
@@ -51,6 +52,7 @@ urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="api-health"),
     path("schema/", schema_view, name="api-schema"),
     path("docs/summary/", ApiDocsSummaryView.as_view(), name="api-docs-summary"),
+    path("public/safety-summary/", PublicSafetySummaryView.as_view(), name="public-safety-summary"),
     path("dashboard/summary/", DashboardSummaryView.as_view(), name="dashboard-summary"),
     path("auth/register/", RegisterView.as_view(), name="auth-register"),
     path("auth/login/", LoginView.as_view(), name="auth-login"),

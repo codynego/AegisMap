@@ -35,6 +35,7 @@ class AlertStatus(models.TextChoices):
     OPEN = "open", "Open"
     ACKNOWLEDGED = "acknowledged", "Acknowledged"
     DISMISSED = "dismissed", "Dismissed"
+    SUPPRESSED = "suppressed", "Suppressed"
     RESOLVED = "resolved", "Resolved"
 
 

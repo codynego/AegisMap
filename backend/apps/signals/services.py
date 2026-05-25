@@ -4,7 +4,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.alerts.services import process_signal_alerts
-from apps.incidents.services import process_signal_intelligence
+from apps.incidents.services import process_signal_intelligence, recompute_incident_state_for_signal
 from apps.risk.services import refresh_watch_zones_for_signal
 from apps.users.models import SourceType, UserRole
 from apps.users.services import update_source_statistics
@@ -127,7 +127,34 @@ def calculate_signal_confidence_score(signal: Signal) -> Decimal:
         if confirm_count == 0 and deny_weight == 0:
             score = min(score, Decimal("0.45"))
 
+    score -= _confidence_decay_penalty(signal, verification_summary)
+
     return max(Decimal("0.00"), min(Decimal("1.00"), score))
+
+
+def _confidence_decay_penalty(signal: Signal, verification_summary: dict) -> Decimal:
+    reference_time = signal.occurred_at or signal.received_at or signal.created_at
+    if reference_time is None:
+        return Decimal("0.00")
+
+    # Only a confirming verification should refresh the age of a report.
+    events = list(
+        signal.verification_events.filter(response=VerificationResponse.CONFIRM).order_by("-updated_at")[:1]
+    )
+    latest_reconfirmation_at = events[0].updated_at if events else None
+    freshness_anchor = max(filter(None, [reference_time, latest_reconfirmation_at]))
+    age = timezone.now() - freshness_anchor
+    hours = age.total_seconds() / 3600
+
+    if verification_summary.get("confirm_count", 0) >= 2 and hours <= 24 * 7:
+        return Decimal("0.00")
+    if hours >= 24 * 30:
+        return Decimal("0.30")
+    if hours >= 24 * 7:
+        return Decimal("0.18")
+    if hours >= 72:
+        return Decimal("0.08")
+    return Decimal("0.00")
 
 
 def map_score_to_confidence(score: Decimal) -> str:
@@ -153,6 +180,7 @@ def assess_signal(signal: Signal) -> Signal:
     signal.metadata = {
         **signal.metadata,
         "confidence_score": float(score),
+        "confidence_decayed_at": timezone.now().isoformat(),
         "assessed_at": timezone.now().isoformat(),
         "cluster_id": signal.cluster_id,
         "pattern_id": getattr(intelligence_result.get("pattern"), "pk", None),
@@ -168,6 +196,7 @@ def assess_signal(signal: Signal) -> Signal:
 
     refresh_watch_zones_for_signal(signal)
     process_signal_alerts(signal)
+    recompute_incident_state_for_signal(signal)
     return signal
 
 

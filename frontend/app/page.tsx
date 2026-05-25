@@ -252,6 +252,13 @@ export default function Home() {
             </p>
             <div className="mt-10 flex flex-col justify-center gap-4 md:flex-row">
               <Link
+                href="/public-safety"
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgb(78,222,163,0.22)] bg-[rgb(78,222,163,0.08)] px-8 py-4 text-[18px] font-semibold text-[var(--secondary)] transition hover:scale-[1.02] hover:bg-[rgb(78,222,163,0.14)]"
+              >
+                <HudChip label="MAP" color="var(--secondary)" />
+                Explore Public Safety Map
+              </Link>
+              <Link
                 href="/login"
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-[var(--primary-container)] px-8 py-4 text-[18px] font-semibold text-[var(--on-primary-container)] transition hover:scale-[1.02] hover:bg-[var(--primary)]"
               >
