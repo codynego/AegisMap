@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect, useMemo, useState, useCallback, useRef,
+  type Dispatch, type SetStateAction,
+} from "react";
 import { useRouter } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
@@ -12,99 +15,60 @@ import { searchAreaHubs } from "@/lib/user-location";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type IncidentRecord = {
-  id: number;
-  title: string;
-  incident_type: string;
-  confidence: string;
-  severity: string;
-  status: string;
-  location_name: string;
-  latitude: number | string | null;
-  longitude: number | string | null;
-  summary: string;
-  detected_at: string;
-  created_at: string;
+  id: number; title: string; incident_type: string; confidence: string;
+  severity: string; status: string; location_name: string;
+  latitude: number | string | null; longitude: number | string | null;
+  summary: string; detected_at: string; created_at: string;
   visibility_score?: number;
 };
 
 type WatchZoneRecord = {
-  id: number;
-  name: string;
-  zone_type: string;
-  current_risk_level: string;
+  id: number; name: string; zone_type: string; current_risk_level: string;
   current_risk_score: number | string | null;
   centroid_latitude: number | string | null;
   centroid_longitude: number | string | null;
 };
 
 type GeofenceRecord = {
-  id: number;
-  name: string;
-  geofence_type: string;
-  status: string;
+  id: number; name: string; geofence_type: string; status: string;
   centroid_latitude: number | string | null;
   centroid_longitude: number | string | null;
-  radius_meters: number | string | null;
-  description: string;
+  radius_meters: number | string | null; description: string;
 };
 
 type DashboardAlert = {
-  id: number;
-  level: string;
-  triggeredAt?: string;
-  title: string;
-  body: string;
-  meta: string;
+  id: number; level: string; triggeredAt?: string;
+  title: string; body: string; meta: string;
 };
 
 type ApiListResponse<T> = { results?: T[] };
 
 type MapIncidentPoint = {
-  id: number;
-  title: string;
-  incidentType: string;
-  severity: string;
-  confidence: string;
-  status: string;
-  summary: string;
-  detectedAt: string;
-  latitude: number;
-  longitude: number;
-  locationName: string;
+  id: number; title: string; incidentType: string; severity: string;
+  confidence: string; status: string; summary: string; detectedAt: string;
+  latitude: number; longitude: number; locationName: string;
   visibilityScore?: number;
 };
 
 type WatchZonePoint = {
-  id: number;
-  name: string;
-  riskLevel: string;
-  riskScore: number;
-  latitude: number;
-  longitude: number;
+  id: number; name: string; riskLevel: string;
+  riskScore: number; latitude: number; longitude: number;
 };
 
 type RouteHub = {
-  id: string;
-  label: string;
-  state: string;
-  latitude: number;
-  longitude: number;
+  id: string; label: string; state: string;
+  latitude: number; longitude: number;
 };
 
 type RouteHubSuggestion = {
-  id: string;
-  label: string;
-  state: string;
-  latitude: number;
-  longitude: number;
+  id: string; label: string; state: string;
+  latitude: number; longitude: number;
   description: string;
-  kind: "state" | "city" | "place";
+  kind: "state" | "city" | "place" | "street";
 };
 
 type RouteStop = {
-  label: string;
-  latitude: number;
-  longitude: number;
+  label: string; latitude: number; longitude: number;
   kind: "origin" | "waypoint" | "destination";
 };
 
@@ -112,13 +76,15 @@ type ScoredIncident = MapIncidentPoint & { distanceKm: number; weight: number };
 type ScoredWatchZone = WatchZonePoint & { distanceKm: number; weight: number };
 
 type RiskLevel = "low" | "guarded" | "elevated" | "high" | "critical";
-type TravelMode = "drive" | "walk";
+type TravelMode = "drive" | "walk" | "transit";
 
-type RouteAssessment = {
-  routeLabel: string;
+type RouteOption = {
+  id: string;
+  label: string; // e.g. "Via Lokoja", "Via Ibadan"
   score: number;
   level: RiskLevel;
   distanceKm: number;
+  durationMin: number;
   corridorKm: number;
   routePath: Array<[number, number]>;
   routeStops: RouteStop[];
@@ -127,24 +93,20 @@ type RouteAssessment = {
   summary: string;
   advisories: string[];
   timingNote: string;
+  isBest: boolean;
+  isFastest: boolean;
+  isSafest: boolean;
 };
 
 type LivePosition = {
-  latitude: number;
-  longitude: number;
-  accuracy: number | null;
-  speedKph: number | null;
-  heading: number | null;
-  updatedAt: string;
+  latitude: number; longitude: number; accuracy: number | null;
+  speedKph: number | null; heading: number | null; updatedAt: string;
 };
 
 type LiveAlertSeverity = "info" | "warning" | "critical";
 
 type LiveAlert = {
-  id: string;
-  title: string;
-  message: string;
-  severity: LiveAlertSeverity;
+  id: string; title: string; message: string; severity: LiveAlertSeverity;
   kind: "incident" | "watch_zone" | "geofence" | "route_ahead" | "feed";
   createdAt: string;
 };
@@ -153,6 +115,16 @@ type LiveAlert = {
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
+
+// Average speeds by mode (km/h)
+const AVG_SPEED: Record<TravelMode, number> = {
+  drive: 65,
+  walk: 5,
+  transit: 35,
+};
+
+// Urban speed factor (slower in cities)
+const URBAN_FACTOR = 0.72;
 
 const ROUTE_HUBS: RouteHub[] = [
   { id: "lagos", label: "Lagos", state: "Lagos", latitude: 6.5244, longitude: 3.3792 },
@@ -195,12 +167,18 @@ const ROUTE_HUBS: RouteHub[] = [
   { id: "port-harcourt", label: "Port Harcourt", state: "Rivers", latitude: 4.8156, longitude: 7.0498 },
 ];
 
-const RISK_CONFIG: Record<RiskLevel, { color: string; bg: string; border: string; dot: string }> = {
-  critical: { color: "text-red-300", bg: "bg-red-500/10", border: "border-red-500/30", dot: "bg-red-400" },
-  high: { color: "text-orange-300", bg: "bg-orange-500/10", border: "border-orange-500/30", dot: "bg-orange-400" },
-  elevated: { color: "text-amber-300", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-400" },
-  guarded: { color: "text-cyan-300", bg: "bg-cyan-500/10", border: "border-cyan-500/30", dot: "bg-cyan-400" },
-  low: { color: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-400" },
+const RISK_CONFIG: Record<RiskLevel, { color: string; bg: string; border: string; dot: string; label: string }> = {
+  critical: { color: "text-red-300", bg: "bg-red-500/10", border: "border-red-500/30", dot: "bg-red-400", label: "Critical" },
+  high:     { color: "text-orange-300", bg: "bg-orange-500/10", border: "border-orange-500/30", dot: "bg-orange-400", label: "High" },
+  elevated: { color: "text-amber-300", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-400", label: "Elevated" },
+  guarded:  { color: "text-cyan-300", bg: "bg-cyan-500/10", border: "border-cyan-500/30", dot: "bg-cyan-400", label: "Guarded" },
+  low:      { color: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-400", label: "Low" },
+};
+
+const MODE_CONFIG: Record<TravelMode, { icon: string; label: string }> = {
+  drive:   { icon: "🚗", label: "Drive" },
+  walk:    { icon: "🚶", label: "Walk" },
+  transit: { icon: "🚌", label: "Transit" },
 };
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
@@ -228,28 +206,19 @@ function relativeTime(value?: string | null): string {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatDistance(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(km < 10 ? 1 : 0)}km`;
+}
+
 function formatType(value: string): string {
   return formatReportType(value);
-}
-
-function makeRouteHubFromLocation(result: LocationSearchResult, kind: "origin" | "destination"): RouteHub {
-  return {
-    id: `custom-${kind}-${result.id}`,
-    label: result.label,
-    state: result.state,
-    latitude: result.latitude,
-    longitude: result.longitude,
-  };
-}
-
-function makeRouteHubFromSuggestion(suggestion: RouteHubSuggestion, kind: "origin" | "destination"): RouteHub {
-  return {
-    id: `custom-${kind}-${suggestion.id}`,
-    label: suggestion.label,
-    state: suggestion.state,
-    latitude: suggestion.latitude,
-    longitude: suggestion.longitude,
-  };
 }
 
 function haversine(latA: number, lngA: number, latB: number, lngB: number): number {
@@ -260,6 +229,22 @@ function haversine(latA: number, lngA: number, latB: number, lngB: number): numb
     Math.sin(dLat / 2) ** 2 +
     Math.cos((latA * Math.PI) / 180) * Math.cos((latB * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function estimateDuration(distanceKm: number, mode: TravelMode, hour: number): number {
+  const base = AVG_SPEED[mode];
+  const isUrban = distanceKm < 20;
+  const isNight = hour >= 22 || hour < 5;
+  const isRushHour = (hour >= 7 && hour <= 9) || (hour >= 16 && hour <= 19);
+  let effectiveSpeed = base;
+  if (isUrban) effectiveSpeed *= URBAN_FACTOR;
+  if (isRushHour && mode === "drive") effectiveSpeed *= 0.65;
+  if (isNight && mode === "drive") effectiveSpeed *= 1.15; // faster at night, less traffic
+  if (mode === "transit") {
+    const stops = Math.ceil(distanceKm / 8); // approx stop every 8km
+    return (distanceKm / effectiveSpeed) * 60 + stops * 2; // 2min per stop
+  }
+  return (distanceKm / effectiveSpeed) * 60;
 }
 
 function ptToSegKm(
@@ -291,43 +276,25 @@ function ptToPathKm(lat: number, lng: number, path: Array<[number, number]>): nu
 }
 
 function projectToPathKm(lat: number, lng: number, path: Array<[number, number]>) {
-  if (path.length < 2) {
-    return { offsetKm: Infinity, alongKm: 0, totalKm: 0 };
-  }
-
-  let minOffsetKm = Infinity;
-  let closestAlongKm = 0;
-  let traversedKm = 0;
-
+  if (path.length < 2) return { offsetKm: Infinity, alongKm: 0, totalKm: 0 };
+  let minOffsetKm = Infinity, closestAlongKm = 0, traversedKm = 0;
   for (let i = 0; i < path.length - 1; i++) {
     const [aLng, aLat] = path[i];
     const [bLng, bLat] = path[i + 1];
     const mLat = (((lat + aLat + bLat) / 3) * Math.PI) / 180;
-    const kLat = 111.32;
-    const kLng = 111.32 * Math.cos(mLat);
-    const px = lng * kLng;
-    const py = lat * kLat;
-    const ax = aLng * kLng;
-    const ay = aLat * kLat;
-    const bx = bLng * kLng;
-    const by = bLat * kLat;
-    const abx = bx - ax;
-    const aby = by - ay;
+    const kLat = 111.32, kLng = 111.32 * Math.cos(mLat);
+    const px = lng * kLng, py = lat * kLat;
+    const ax = aLng * kLng, ay = aLat * kLat;
+    const bx = bLng * kLng, by = bLat * kLat;
+    const abx = bx - ax, aby = by - ay;
     const segmentLengthKm = Math.hypot(abx, aby);
     const ls = abx ** 2 + aby ** 2;
     const t = ls === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / ls));
-    const projectedX = ax + abx * t;
-    const projectedY = ay + aby * t;
-    const offsetKm = Math.hypot(px - projectedX, py - projectedY);
-
-    if (offsetKm < minOffsetKm) {
-      minOffsetKm = offsetKm;
-      closestAlongKm = traversedKm + segmentLengthKm * t;
-    }
-
+    const projX = ax + abx * t, projY = ay + aby * t;
+    const offsetKm = Math.hypot(px - projX, py - projY);
+    if (offsetKm < minOffsetKm) { minOffsetKm = offsetKm; closestAlongKm = traversedKm + segmentLengthKm * t; }
     traversedKm += segmentLengthKm;
   }
-
   return { offsetKm: minOffsetKm, alongKm: closestAlongKm, totalKm: traversedKm };
 }
 
@@ -346,8 +313,7 @@ function severityWeight(s: string): number {
 }
 
 function zoneWeight(level: string, score: number): number {
-  const lf =
-    level.includes("critical") ? 1.4 : level.includes("high") ? 1.1 : level.includes("medium") ? 0.85 : 0.55;
+  const lf = level.includes("critical") ? 1.4 : level.includes("high") ? 1.1 : level.includes("medium") ? 0.85 : 0.55;
   return (score / 100) * 8 * lf;
 }
 
@@ -360,19 +326,15 @@ function scoreToLevel(s: number): RiskLevel {
   return s >= 85 ? "critical" : s >= 65 ? "high" : s >= 40 ? "elevated" : s >= 20 ? "guarded" : "low";
 }
 
-function incidentAlertRadiusKm(mode: TravelMode) {
-  return mode === "drive" ? 5 : 1.2;
+function isOngoingIncident(status: string) {
+  const n = status.trim().toLowerCase();
+  return n !== "resolved" && n !== "closed" && n !== "dismissed";
 }
 
-function routeAheadLookaheadKm(mode: TravelMode) {
-  return mode === "drive" ? 18 : 4;
-}
-
-function watchZoneEntryRadiusKm(level: string) {
-  if (level.includes("critical")) return 10;
-  if (level.includes("high")) return 8;
-  if (level.includes("medium")) return 6;
-  return 4;
+function isRecentTimestamp(value?: string | null, windowHours = 6) {
+  if (!value) return false;
+  const ageHours = (Date.now() - new Date(value).getTime()) / 36e5;
+  return ageHours >= 0 && ageHours <= windowHours;
 }
 
 function alertSeverityFromIncident(severity: string): LiveAlertSeverity {
@@ -387,70 +349,33 @@ function alertTone(severity: LiveAlertSeverity) {
   return "border-cyan-500/30 bg-cyan-500/10 text-cyan-200";
 }
 
-function isOngoingIncident(status: string) {
-  const normalized = status.trim().toLowerCase();
-  return normalized !== "resolved" && normalized !== "closed" && normalized !== "dismissed";
-}
-
-function isRecentTimestamp(value?: string | null, windowHours = 6) {
-  if (!value) return false;
-  const ageHours = (Date.now() - new Date(value).getTime()) / 36e5;
-  return ageHours >= 0 && ageHours <= windowHours;
-}
-
 function deriveHubState(latitude: number, longitude: number): string {
-  let closestHub = ROUTE_HUBS[0];
-  let closestDistance = Infinity;
-
+  let closest = ROUTE_HUBS[0], minDist = Infinity;
   for (const hub of ROUTE_HUBS) {
-    const distance = haversine(latitude, longitude, hub.latitude, hub.longitude);
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestHub = hub;
-    }
+    const d = haversine(latitude, longitude, hub.latitude, hub.longitude);
+    if (d < minDist) { minDist = d; closest = hub; }
   }
-
-  return closestHub.state;
+  return closest.state;
 }
 
 function buildRouteHubs(watchZoneRecords: WatchZoneRecord[], geofenceRecords: GeofenceRecord[]): RouteHub[] {
-  const dynamicHubs: RouteHub[] = [];
-
-  watchZoneRecords.forEach((zone) => {
-    if (zone.zone_type !== "route_hub") return;
-    const latitude = toNumber(zone.centroid_latitude);
-    const longitude = toNumber(zone.centroid_longitude);
-    if (latitude === null || longitude === null) return;
-
-    dynamicHubs.push({
-      id: `watch-zone-${zone.id}`,
-      label: zone.name,
-      state: deriveHubState(latitude, longitude),
-      latitude,
-      longitude,
-    });
+  const dynamic: RouteHub[] = [];
+  watchZoneRecords.forEach((z) => {
+    if (z.zone_type !== "route_hub") return;
+    const lat = toNumber(z.centroid_latitude), lng = toNumber(z.centroid_longitude);
+    if (lat === null || lng === null) return;
+    dynamic.push({ id: `watch-zone-${z.id}`, label: z.name, state: deriveHubState(lat, lng), latitude: lat, longitude: lng });
   });
-
-  geofenceRecords.forEach((geofence) => {
-    if (geofence.geofence_type !== "village") return;
-    const latitude = toNumber(geofence.centroid_latitude);
-    const longitude = toNumber(geofence.centroid_longitude);
-    if (latitude === null || longitude === null) return;
-
-    dynamicHubs.push({
-      id: `geofence-${geofence.id}`,
-      label: geofence.name,
-      state: deriveHubState(latitude, longitude),
-      latitude,
-      longitude,
-    });
+  geofenceRecords.forEach((g) => {
+    if (g.geofence_type !== "village") return;
+    const lat = toNumber(g.centroid_latitude), lng = toNumber(g.centroid_longitude);
+    if (lat === null || lng === null) return;
+    dynamic.push({ id: `geofence-${g.id}`, label: g.name, state: deriveHubState(lat, lng), latitude: lat, longitude: lng });
   });
-
-  const merged = [...ROUTE_HUBS, ...dynamicHubs];
+  const merged = [...ROUTE_HUBS, ...dynamic];
   const seen = new Set<string>();
-
-  return merged.filter((hub) => {
-    const key = `${hub.label.trim().toLowerCase()}|${hub.state.trim().toLowerCase()}`;
+  return merged.filter((h) => {
+    const key = `${h.label.trim().toLowerCase()}|${h.state.trim().toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -458,27 +383,26 @@ function buildRouteHubs(watchZoneRecords: WatchZoneRecord[], geofenceRecords: Ge
 }
 
 const CURRENT_LOCATION_HUB_ID = "__current_location__";
+function makeCurrentLocationHub(pos: LivePosition): RouteHub {
+  return { id: CURRENT_LOCATION_HUB_ID, label: "My location", state: deriveHubState(pos.latitude, pos.longitude), latitude: pos.latitude, longitude: pos.longitude };
+}
 
-function makeCurrentLocationHub(position: LivePosition): RouteHub {
-  return {
-    id: CURRENT_LOCATION_HUB_ID,
-    label: "My location",
-    state: deriveHubState(position.latitude, position.longitude),
-    latitude: position.latitude,
-    longitude: position.longitude,
-  };
+function makeRouteHubFromSuggestion(s: RouteHubSuggestion, kind: "origin" | "destination"): RouteHub {
+  return { id: `custom-${kind}-${s.id}`, label: s.label, state: s.state, latitude: s.latitude, longitude: s.longitude };
 }
 
 // ─── Route Logic ──────────────────────────────────────────────────────────────
 
-function buildAssessment(
+function buildRouteOption(
+  id: string,
   origin: RouteHub,
   destination: RouteHub,
   hour: number,
+  mode: TravelMode,
   incidents: MapIncidentPoint[],
   zones: WatchZonePoint[],
   via?: RouteHub | null,
-): RouteAssessment {
+): Omit<RouteOption, "isBest" | "isFastest" | "isSafest"> {
   const stops = [origin, ...(via ? [via] : []), destination];
   const path = stops.map((s) => [s.longitude, s.latitude] as [number, number]);
   const corridorKm = pathLengthKm(path);
@@ -512,28 +436,26 @@ function buildAssessment(
   const zScore = routeZones.reduce((s, z) => s + z.weight, 0);
   const score = Math.min(100, Math.round(iScore * 4.4 + zScore * 1.65 + timePenalty));
   const level = scoreToLevel(score);
-
+  const distanceKm = Math.round(corridorKm * 10) / 10;
+  const durationMin = Math.round(estimateDuration(corridorKm, mode, hour));
   const focal = routeIncidents[0]?.locationName || routeZones[0]?.name || `${origin.label}–${destination.label}`;
+  const viaLabel = via ? `Via ${via.label}` : "Direct route";
 
   const summaries: Record<RiskLevel, string> = {
-    critical: `Critical exposure near ${focal}. Immediate reroute or delay advised.`,
-    high: `High pressure building near ${focal}. Safer alternative recommended.`,
+    critical: `Critical exposure near ${focal}. Immediate reroute or delay strongly advised.`,
+    high: `High pressure building near ${focal}. A safer alternative is recommended.`,
     elevated: `Elevated risk near ${focal}. Proceed with caution and tight timing.`,
     guarded: `Guarded monitoring advised around ${focal}.`,
     low: `No significant threat concentration on this corridor.`,
   };
 
   return {
-    routeLabel: stops.map((s) => s.label).join(" → "),
-    score,
-    level,
-    distanceKm: Math.round(corridorKm),
-    corridorKm: threshold,
+    id,
+    label: viaLabel,
+    score, level, distanceKm, durationMin, corridorKm: threshold,
     routePath: path,
     routeStops: stops.map((s, i) => ({
-      label: s.label,
-      latitude: s.latitude,
-      longitude: s.longitude,
+      label: s.label, latitude: s.latitude, longitude: s.longitude,
       kind: i === 0 ? "origin" : i === stops.length - 1 ? "destination" : "waypoint",
     })),
     incidents: routeIncidents,
@@ -548,7 +470,7 @@ function buildAssessment(
         : "No elevated watch zones on route.",
       night
         ? `Night departure increases exposure. Consider leaving before 18:00.`
-        : `Daytime window (${hour}:00) is safer than a night movement profile.`,
+        : `Daytime window (${hour}:00) is a lower-risk window.`,
     ],
     timingNote: night
       ? `Night travel after ${hour}:00 — elevated exposure on active corridors.`
@@ -556,65 +478,349 @@ function buildAssessment(
   };
 }
 
-function findAlternative(
+function buildAllRouteOptions(
   origin: RouteHub,
   destination: RouteHub,
   hour: number,
+  mode: TravelMode,
   incidents: MapIncidentPoint[],
   zones: WatchZonePoint[],
   hubs: RouteHub[],
-): RouteAssessment | null {
-  const direct = haversine(origin.latitude, origin.longitude, destination.latitude, destination.longitude);
-  const candidates = hubs.filter((h) => h.id !== origin.id && h.id !== destination.id)
+): RouteOption[] {
+  const direct = buildRouteOption("direct", origin, destination, hour, mode, incidents, zones);
+  const directDist = haversine(origin.latitude, origin.longitude, destination.latitude, destination.longitude);
+
+  const alternates = hubs
+    .filter((h) => h.id !== origin.id && h.id !== destination.id)
     .map((hub) => ({
       hub,
       detour:
         haversine(origin.latitude, origin.longitude, hub.latitude, hub.longitude) +
         haversine(hub.latitude, hub.longitude, destination.latitude, destination.longitude),
     }))
-    .filter((c) => c.detour <= direct * 1.7)
-    .map((c) => ({ hub: c.hub, assessment: buildAssessment(origin, destination, hour, incidents, zones, c.hub) }))
-    .sort((a, b) => a.assessment.score - b.assessment.score);
-  return candidates[0]?.assessment ?? null;
+    .filter((c) => c.detour <= directDist * 1.65 && c.detour >= directDist * 0.85)
+    .sort((a, b) => a.detour - b.detour)
+    .slice(0, 3)
+    .map((c, i) =>
+      buildRouteOption(`alt-${i}`, origin, destination, hour, mode, incidents, zones, c.hub)
+    );
+
+  const all = [direct, ...alternates];
+  const minScore = Math.min(...all.map((r) => r.score));
+  const minDuration = Math.min(...all.map((r) => r.durationMin));
+
+  return all.map((r) => ({
+    ...r,
+    isBest: r.score === minScore,
+    isFastest: r.durationMin === minDuration && r.score <= minScore + 15,
+    isSafest: r.score === minScore,
+  }));
 }
 
-// ─── Subcomponents ────────────────────────────────────────────────────────────
+// ─── Icons ────────────────────────────────────────────────────────────────────
 
-function RiskBadge({ level, score }: { level: RiskLevel; score: number }) {
+function IconMenu() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="17" x2="21" y2="17"/>
+    </svg>
+  );
+}
+
+function IconChevronDown({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  );
+}
+
+function IconSwap() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/>
+    </svg>
+  );
+}
+
+function IconSearch() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+  );
+}
+
+function IconLocation() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 1 8 8c0 5.25-8 14-8 14S4 15.25 4 10a8 8 0 0 1 8-8z"/>
+    </svg>
+  );
+}
+
+function IconClock() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+    </svg>
+  );
+}
+
+function IconShield() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+  );
+}
+
+function IconRoute() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/>
+      <circle cx="18" cy="5" r="3"/>
+    </svg>
+  );
+}
+
+function IconWarning() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+  );
+}
+
+function IconX() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+  );
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function RiskPill({ level, score, compact }: { level: RiskLevel; score: number; compact?: boolean }) {
   const cfg = RISK_CONFIG[level];
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest ${cfg.bg} ${cfg.border} ${cfg.color}`}
-    >
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold uppercase tracking-widest ${compact ? "text-[9px]" : "text-[10px]"} ${cfg.bg} ${cfg.border} ${cfg.color}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-      {level}
-      <span className="ml-0.5 opacity-70">{score}</span>
+      {cfg.label}
+      {!compact && <span className="ml-0.5 opacity-60">{score}</span>}
     </span>
+  );
+}
+
+function RouteCard({
+  route,
+  selected,
+  onSelect,
+}: {
+  route: RouteOption;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const cfg = RISK_CONFIG[route.level];
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full rounded-2xl border p-4 text-left transition-all duration-200 ${
+        selected
+          ? `${cfg.border} ${cfg.bg} ring-1 ring-inset ring-white/10`
+          : "border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-white">{route.label}</span>
+            {route.isBest && (
+              <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-emerald-300">
+                Recommended
+              </span>
+            )}
+            {route.isFastest && !route.isBest && (
+              <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-blue-300">
+                Fastest
+              </span>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-white/50">
+            <span className={`flex items-center gap-1.5 font-semibold ${selected ? "text-white/80" : ""}`}>
+              <IconClock />
+              {formatDuration(route.durationMin)}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-px w-3 bg-white/20" />
+              {formatDistance(route.distanceKm)}
+            </span>
+            <span className="flex items-center gap-1 text-white/35">
+              <IconWarning />
+              {route.incidents.length} incident{route.incidents.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
+        <RiskPill level={route.level} score={route.score} compact />
+      </div>
+
+      {/* Route mini-map progress bar */}
+      <div className="mt-3">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+          <div
+            className={`h-full rounded-full transition-all ${cfg.dot}`}
+            style={{ width: `${Math.max(5, 100 - route.score)}%` }}
+          />
+        </div>
+        <p className="mt-1.5 text-[11px] leading-5 text-white/40">{route.summary}</p>
+      </div>
+    </button>
+  );
+}
+
+function SearchInput({
+  label,
+  value,
+  suggestions,
+  onChange,
+  onSelect,
+  onClear,
+  placeholder,
+  icon,
+}: {
+  label: string;
+  value: string;
+  suggestions: RouteHubSuggestion[];
+  onChange: (v: string) => void;
+  onSelect: (s: RouteHubSuggestion) => void;
+  onClear: () => void;
+  placeholder: string;
+  icon: React.ReactNode;
+}) {
+  const iconBadge: Record<string, string> = {
+    state: "ST",
+    city: "🏙",
+    place: "📍",
+    street: "🛣",
+  };
+
+  return (
+    <div className="relative">
+      <p className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-white/30">
+        {icon}
+        {label}
+      </p>
+      <div className="relative">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-xl border border-white/[0.08] bg-[#06090f] px-3 py-2.5 pr-8 text-sm text-white placeholder-white/25 outline-none transition focus:border-cyan-400/40 focus:ring-1 focus:ring-cyan-400/10"
+        />
+        {value && (
+          <button
+            onClick={onClear}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-white/30 hover:text-white/60"
+          >
+            <IconX />
+          </button>
+        )}
+      </div>
+
+      {suggestions.length > 0 && (
+        <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-30 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#07101e] shadow-[0_24px_60px_rgba(0,0,0,0.5)]">
+          {suggestions.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onSelect(s)}
+              className="flex w-full items-center gap-3 border-b border-white/[0.05] px-3.5 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04] active:bg-white/[0.07]"
+            >
+              <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.04] text-xs">
+                {iconBadge[s.kind] ?? "📍"}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-white">{s.label}</p>
+                <p className="truncate text-[11px] text-white/35">{s.description || s.state}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveAlertBanner({ alerts, onDismiss }: { alerts: LiveAlert[]; onDismiss: (id: string) => void }) {
+  if (alerts.length === 0) return null;
+  return (
+    <div className="fixed right-3 top-16 z-50 flex w-[min(380px,calc(100vw-1.5rem))] flex-col gap-2">
+      {alerts.slice(0, 3).map((alert) => (
+        <div
+          key={alert.id}
+          className={`rounded-2xl border px-4 py-3 shadow-[0_18px_45px_rgba(0,0,0,0.3)] backdrop-blur-2xl ${alertTone(alert.severity)}`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <p className="text-[9px] uppercase tracking-[0.18em] opacity-60">
+                {alert.kind.replace(/_/g, " ")} warning
+              </p>
+              <p className="mt-0.5 text-xs font-semibold leading-5">{alert.title}</p>
+              <p className="mt-0.5 text-[11px] leading-5 opacity-75">{alert.message}</p>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-[9px] opacity-50">{relativeTime(alert.createdAt)}</span>
+              <button onClick={() => onDismiss(alert.id)} className="rounded-full p-0.5 opacity-40 hover:opacity-70">
+                <IconX />
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TravelModePicker({ mode, onChange }: { mode: TravelMode; onChange: (m: TravelMode) => void }) {
+  return (
+    <div className="flex gap-1.5">
+      {(["drive", "walk", "transit"] as TravelMode[]).map((m) => (
+        <button
+          key={m}
+          onClick={() => onChange(m)}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border py-2.5 text-xs font-semibold uppercase tracking-widest transition ${
+            mode === m
+              ? "border-cyan-400/35 bg-cyan-500/10 text-cyan-300"
+              : "border-white/[0.07] bg-white/[0.02] text-white/40 hover:text-white/60"
+          }`}
+        >
+          <span>{MODE_CONFIG[m].icon}</span>
+          <span className="hidden sm:inline">{MODE_CONFIG[m].label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
 function ScoreMeter({ score, level }: { score: number; level: RiskLevel }) {
   const cfg = RISK_CONFIG[level];
-  const segments = ["low", "guarded", "elevated", "high", "critical"] as RiskLevel[];
+  const segments: RiskLevel[] = ["low", "guarded", "elevated", "high", "critical"];
   return (
     <div className="flex gap-1">
       {segments.map((seg) => {
-        const active =
-          (seg === "low" && score < 20) ||
-          (seg === "guarded" && score >= 20 && score < 40) ||
-          (seg === "elevated" && score >= 40 && score < 65) ||
-          (seg === "high" && score >= 65 && score < 85) ||
-          (seg === "critical" && score >= 85);
-        const passed =
-          (seg === "low" && score >= 20) ||
-          (seg === "guarded" && score >= 40) ||
-          (seg === "elevated" && score >= 65) ||
-          (seg === "high" && score >= 85);
+        const thresholds: Record<RiskLevel, [number, number]> = {
+          low: [0, 20], guarded: [20, 40], elevated: [40, 65], high: [65, 85], critical: [85, 101],
+        };
+        const [lo, hi] = thresholds[seg];
+        const active = score >= lo && score < hi;
+        const passed = score >= hi;
         return (
           <div
             key={seg}
-            className={`h-1.5 flex-1 rounded-full transition-all ${
-              active ? cfg.dot : passed ? "opacity-40 " + cfg.dot : "bg-white/10"
+            className={`h-1 flex-1 rounded-full transition-all ${
+              active ? cfg.dot : passed ? `${cfg.dot} opacity-30` : "bg-white/10"
             }`}
           />
         );
@@ -623,136 +829,37 @@ function ScoreMeter({ score, level }: { score: number; level: RiskLevel }) {
   );
 }
 
-function Sidebar({
-  open,
-  onClose,
-  activeIdx,
-  onNav,
-  onLogout,
-  navItems,
-}: {
-  open: boolean;
-  onClose: () => void;
-  activeIdx: number;
-  onNav: (i: number) => void;
-  onLogout: () => void;
-  navItems: NavItem[];
-}) {
-  return (
-    <>
-      {open && (
-        <button
-          aria-label="Close menu"
-          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
-          onClick={onClose}
-        />
-      )}
-      <aside
-        className={`fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-white/[0.06] bg-[#070D1A]/98 backdrop-blur-xl transition-transform duration-300 lg:translate-x-0 ${
-          open ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="px-6 py-7">
-          <h1 className="text-xl font-bold tracking-tight text-cyan-400">GeoPulse AI</h1>
-          <p className="mt-1 text-[10px] uppercase tracking-widest text-white/35">Tactical Intelligence</p>
-        </div>
-        <nav className="flex-1 space-y-0.5 px-3">
-          {navItems.map((item, i) => (
-            <button
-              key={item.label}
-              onClick={() => { onNav(i); onClose(); }}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
-                activeIdx === i
-                  ? "bg-cyan-500/10 text-cyan-300"
-                  : "text-white/45 hover:bg-white/[0.04] hover:text-white/80"
-              }`}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${activeIdx === i ? "bg-cyan-400" : "bg-white/15"}`} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div className="border-t border-white/[0.06] p-3">
-          <button
-            onClick={onLogout}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/40 transition hover:bg-white/[0.04] hover:text-white/70"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-white/15" />
-            Sign out
-          </button>
-        </div>
-      </aside>
-    </>
-  );
+function pushLiveAlert(setAlerts: Dispatch<SetStateAction<LiveAlert[]>>, next: LiveAlert) {
+  setAlerts((cur) => [next, ...cur.filter((a) => a.id !== next.id)].slice(0, 6));
 }
 
-function HamburgerIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <line x1="3" y1="7" x2="21" y2="7" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="17" x2="21" y2="17" />
-    </svg>
-  );
-}
+// ─── Main Panel ───────────────────────────────────────────────────────────────
 
-function ChevronUpIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <polyline points="18 15 12 9 6 15" />
-    </svg>
-  );
-}
+type PanelTab = "routes" | "threats" | "live";
 
-function SwapIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
-    </svg>
-  );
-}
-
-function LiveWarningStack({ alerts }: { alerts: LiveAlert[] }) {
-  if (alerts.length === 0) return null;
-  return (
-    <div className="fixed right-4 top-20 z-40 flex w-[min(420px,calc(100vw-2rem))] flex-col gap-3">
-      {alerts.map((alert) => (
-        <div
-          key={alert.id}
-          className={`rounded-2xl border px-4 py-3 shadow-[0_18px_45px_rgba(0,0,0,0.26)] backdrop-blur-xl ${alertTone(alert.severity)}`}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.18em] opacity-70">
-                {alert.kind.replace("_", " ")} warning
-              </p>
-              <p className="mt-1 text-sm font-semibold">{alert.title}</p>
-              <p className="mt-1 text-xs leading-5 opacity-85">{alert.message}</p>
-            </div>
-            <span className="text-[10px] opacity-60">{relativeTime(alert.createdAt)}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Panel Tabs ───────────────────────────────────────────────────────────────
-
-type Tab = "planner" | "assessment" | "threats";
-
-function PanelContent({
-  tab,
-  assessment,
-  altAssessment,
+function MainPanel({
+  routes,
+  selectedRouteId,
+  onSelectRoute,
+  activeTab,
+  onTabChange,
+  // planner inputs
   originInput,
   destinationInput,
   originSuggestions,
   destinationSuggestions,
   departureHour,
-  previewAlt,
-  loading,
   travelMode,
+  onOriginChange,
+  onDestinationChange,
+  onSelectOriginSugg,
+  onSelectDestinationSugg,
+  onClearOrigin,
+  onClearDestination,
+  onHourChange,
+  onSwap,
+  onTravelModeChange,
+  // live tracking
   trackingEnabled,
   livePosition,
   useCurrentLocation,
@@ -760,28 +867,29 @@ function PanelContent({
   currentLocationStatus,
   trackingError,
   liveAlerts,
-  heatmapEnabled,
-  onOriginInputChange,
-  onDestinationInputChange,
-  onSelectOriginSuggestion,
-  onSelectDestinationSuggestion,
-  onHourChange,
-  onSwap,
-  onToggleAlt,
-  onTravelModeChange,
   onToggleTracking,
+  loading,
 }: {
-  tab: Tab;
-  assessment: RouteAssessment;
-  altAssessment: RouteAssessment | null;
+  routes: RouteOption[];
+  selectedRouteId: string;
+  onSelectRoute: (id: string) => void;
+  activeTab: PanelTab;
+  onTabChange: (t: PanelTab) => void;
   originInput: string;
   destinationInput: string;
   originSuggestions: RouteHubSuggestion[];
   destinationSuggestions: RouteHubSuggestion[];
   departureHour: number;
-  previewAlt: boolean;
-  loading: boolean;
   travelMode: TravelMode;
+  onOriginChange: (v: string) => void;
+  onDestinationChange: (v: string) => void;
+  onSelectOriginSugg: (s: RouteHubSuggestion) => void;
+  onSelectDestinationSugg: (s: RouteHubSuggestion) => void;
+  onClearOrigin: () => void;
+  onClearDestination: () => void;
+  onHourChange: (v: number) => void;
+  onSwap: () => void;
+  onTravelModeChange: (m: TravelMode) => void;
   trackingEnabled: boolean;
   livePosition: LivePosition | null;
   useCurrentLocation: boolean;
@@ -789,381 +897,330 @@ function PanelContent({
   currentLocationStatus: string;
   trackingError: string;
   liveAlerts: LiveAlert[];
-  heatmapEnabled: boolean;
-  onOriginInputChange: (v: string) => void;
-  onDestinationInputChange: (v: string) => void;
-  onSelectOriginSuggestion: (suggestion: RouteHubSuggestion) => void;
-  onSelectDestinationSuggestion: (suggestion: RouteHubSuggestion) => void;
-  onHourChange: (v: number) => void;
-  onSwap: () => void;
-  onToggleAlt: () => void;
-  onTravelModeChange: (value: TravelMode) => void;
   onToggleTracking: () => void;
+  loading: boolean;
 }) {
-  const displayed = previewAlt && altAssessment ? altAssessment : assessment;
-  const cfg = RISK_CONFIG[displayed.level];
+  const selectedRoute = routes.find((r) => r.id === selectedRouteId) ?? routes[0];
+  const totalIncidents = selectedRoute?.incidents.length ?? 0;
+  const tabs: { id: PanelTab; label: string }[] = [
+    { id: "routes", label: "Routes" },
+    { id: "threats", label: `Threats${totalIncidents > 0 ? ` (${totalIncidents})` : ""}` },
+    { id: "live", label: "Live" },
+  ];
 
-  if (tab === "planner") {
-    return (
-      <div className="space-y-4 p-4">
-        {/* Route selector */}
-        <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
-          <div className="flex items-center gap-2">
-            <div className="flex flex-1 flex-col gap-3">
-              <div>
-                <p className="mb-1.5 text-[10px] uppercase tracking-widest text-white/35">From</p>
-                <div className="relative">
-                  <input
-                    value={originInput}
-                    onChange={(e) => onOriginInputChange(e.target.value)}
-                    placeholder="Type origin address, city, or place"
-                    className="w-full rounded-xl border border-white/[0.08] bg-[#060B16] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/50"
-                  />
-                  {originSuggestions.length > 0 ? (
-                    <div className="absolute left-0 right-0 top-[calc(100%+0.4rem)] z-20 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#08101f] shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
-                      {originSuggestions.map((suggestion) => (
-                        <button
-                          key={suggestion.id}
-                          type="button"
-                          onClick={() => onSelectOriginSuggestion(suggestion)}
-                          className="flex w-full flex-col items-start gap-1 border-b border-white/[0.06] px-3 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04]"
-                        >
-                          <span className="text-sm font-medium text-white">{suggestion.label}</span>
-                          <span className="text-xs text-white/40">{suggestion.description || suggestion.state}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={onUseCurrentLocation}
-                  className={`mt-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold uppercase tracking-widest transition ${
-                    useCurrentLocation
-                      ? "border-cyan-400/35 bg-cyan-500/10 text-cyan-300"
-                      : "border-white/[0.08] bg-[#060B16] text-white/45 hover:text-white/70"
-                  }`}
-                >
-                  {useCurrentLocation ? "Using my location" : "Use my location"}
-                </button>
-                {currentLocationStatus ? (
-                  <p className="mt-2 text-[11px] leading-5 text-white/40">{currentLocationStatus}</p>
-                ) : null}
-              </div>
-              <div>
-                <p className="mb-1.5 text-[10px] uppercase tracking-widest text-white/35">To</p>
-                <div className="relative">
-                  <input
-                    value={destinationInput}
-                    onChange={(e) => onDestinationInputChange(e.target.value)}
-                    placeholder="Type destination address, city, or place"
-                    className="w-full rounded-xl border border-white/[0.08] bg-[#060B16] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/50"
-                  />
-                  {destinationSuggestions.length > 0 ? (
-                    <div className="absolute left-0 right-0 top-[calc(100%+0.4rem)] z-20 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#08101f] shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
-                      {destinationSuggestions.map((suggestion) => (
-                        <button
-                          key={suggestion.id}
-                          type="button"
-                          onClick={() => onSelectDestinationSuggestion(suggestion)}
-                          className="flex w-full flex-col items-start gap-1 border-b border-white/[0.06] px-3 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04]"
-                        >
-                          <span className="text-sm font-medium text-white">{suggestion.label}</span>
-                          <span className="text-xs text-white/40">{suggestion.description || suggestion.state}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={onSwap}
-              className="ml-2 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-white/50 transition hover:border-cyan-400/30 hover:text-cyan-300"
-              aria-label="Swap origin and destination"
-            >
-              <SwapIcon />
-            </button>
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* ── Search bar (always visible) ── */}
+      <div className="shrink-0 space-y-3 border-b border-white/[0.06] p-4">
+        <div className="flex items-end gap-2">
+          <div className="flex-1 space-y-3">
+            <SearchInput
+              label="From"
+              value={originInput}
+              suggestions={originSuggestions}
+              onChange={onOriginChange}
+              onSelect={onSelectOriginSugg}
+              onClear={onClearOrigin}
+              placeholder="Street, city or place…"
+              icon={<span className="h-2 w-2 rounded-full bg-emerald-400" />}
+            />
+            <SearchInput
+              label="To"
+              value={destinationInput}
+              suggestions={destinationSuggestions}
+              onChange={onDestinationChange}
+              onSelect={onSelectDestinationSugg}
+              onClear={onClearDestination}
+              placeholder="Street, city or place…"
+              icon={<span className="h-2 w-2 rounded-full bg-red-400" />}
+            />
           </div>
+          <button
+            onClick={onSwap}
+            className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-white/40 transition hover:border-cyan-400/30 hover:text-cyan-300"
+            aria-label="Swap"
+          >
+            <IconSwap />
+          </button>
         </div>
 
-        {/* Departure time */}
-        <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-widest text-white/35">Departure</p>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${cfg.bg} ${cfg.border} ${cfg.color}`}>
-              {departureHour.toString().padStart(2, "0")}:00
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={23}
-            value={departureHour}
-            onChange={(e) => onHourChange(Number(e.target.value))}
-            className="w-full accent-cyan-400"
-          />
-          <div className="mt-1.5 flex justify-between text-[10px] text-white/25">
-            <span>00:00 (midnight)</span>
-            <span>23:00</span>
-          </div>
-        </div>
+        {/* Use current location */}
+        <button
+          onClick={onUseCurrentLocation}
+          className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold uppercase tracking-widest transition ${
+            useCurrentLocation
+              ? "border-cyan-400/30 bg-cyan-500/8 text-cyan-300"
+              : "border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60"
+          }`}
+        >
+          <IconLocation />
+          {useCurrentLocation ? "Using my location" : "Use my location as origin"}
+        </button>
+        {currentLocationStatus && (
+          <p className="text-[11px] text-white/35">{currentLocationStatus}</p>
+        )}
 
-        <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-widest text-white/35">Live movement mode</p>
-            <button
-              onClick={onToggleTracking}
-              className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest transition ${
-                trackingEnabled
-                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
-                  : "border-white/[0.08] bg-white/[0.03] text-white/50 hover:text-white"
-              }`}
-            >
-              {trackingEnabled ? "Stop tracking" : "Start tracking"}
-            </button>
-          </div>
+        <TravelModePicker mode={travelMode} onChange={onTravelModeChange} />
+      </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            {(["drive", "walk"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => onTravelModeChange(mode)}
-                className={`rounded-xl border px-3 py-2.5 text-xs font-semibold uppercase tracking-widest transition ${
-                  travelMode === mode
-                    ? "border-cyan-400/35 bg-cyan-500/10 text-cyan-300"
-                    : "border-white/[0.08] bg-[#060B16] text-white/45 hover:text-white/70"
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
+      {/* ── Tabs ── */}
+      <div className="flex shrink-0 border-b border-white/[0.06]">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => onTabChange(t.id)}
+            className={`flex-1 py-3 text-[11px] font-semibold uppercase tracking-widest transition ${
+              activeTab === t.id
+                ? "border-b-2 border-cyan-400 text-cyan-300"
+                : "text-white/30 hover:text-white/60"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-          <div className="mt-3 rounded-xl border border-white/[0.06] bg-[#060B16] p-3 text-xs text-white/50">
-            {trackingEnabled && livePosition ? (
-              <div className="space-y-1.5">
-                <p className="text-white/70">Following your live {travelMode} position on the route map.</p>
-                <p>
-                  {livePosition.latitude.toFixed(5)}, {livePosition.longitude.toFixed(5)}
+      {/* ── Scrollable content ── */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* ROUTES TAB */}
+        {activeTab === "routes" && (
+          <div className="space-y-3 p-4">
+            {/* Departure time */}
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-white/30">
+                  <IconClock /> Departure
                 </p>
-                <p>
-                  Accuracy {livePosition.accuracy ? `${Math.round(livePosition.accuracy)}m` : "unknown"}
-                  {livePosition.speedKph !== null ? ` · ${livePosition.speedKph.toFixed(0)} km/h` : ""}
-                </p>
+                <span className={`rounded-full border px-2.5 py-0.5 text-xs font-bold ${
+                  (departureHour >= 20 || departureHour < 6) ? "border-amber-500/20 bg-amber-500/8 text-amber-300" : "border-emerald-500/20 bg-emerald-500/8 text-emerald-300"
+                }`}>
+                  {departureHour.toString().padStart(2, "0")}:00 {departureHour >= 20 || departureHour < 6 ? "🌙 Night" : "☀️ Day"}
+                </span>
               </div>
-            ) : trackingError ? (
-              <p className="text-amber-300">{trackingError}</p>
-            ) : (
-              <p>Start tracking to keep the route map centered on your live position.</p>
-            )}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between rounded-xl border border-white/[0.06] bg-[#060B16] px-3 py-2.5 text-xs text-white/50">
-            <span>Heatmap overlay</span>
-            <span className={`rounded-full border px-2 py-0.5 uppercase tracking-widest ${heatmapEnabled ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-300" : "border-white/[0.08] text-white/40"}`}>
-              {heatmapEnabled ? "active" : "off"}
-            </span>
-          </div>
-
-          <div className="mt-3 rounded-xl border border-white/[0.06] bg-[#060B16] p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[10px] uppercase tracking-widest text-white/35">Active warnings</p>
-              <span className="text-[10px] text-white/30">{liveAlerts.length}</span>
+              <input
+                type="range" min={0} max={23} value={departureHour}
+                onChange={(e) => onHourChange(Number(e.target.value))}
+                className="w-full accent-cyan-400"
+              />
+              <div className="mt-1 flex justify-between text-[9px] text-white/20">
+                <span>Midnight</span><span>6am</span><span>Noon</span><span>6pm</span><span>11pm</span>
+              </div>
             </div>
-            {liveAlerts.length > 0 ? (
+
+            {/* Route options — Google Maps style */}
+            <div>
+              <p className="mb-2 text-[10px] uppercase tracking-widest text-white/30">
+                {routes.length} route{routes.length !== 1 ? "s" : ""} found
+              </p>
               <div className="space-y-2">
-                {liveAlerts.slice(0, 3).map((alert) => (
-                  <div key={alert.id} className={`rounded-lg border px-3 py-2 ${alertTone(alert.severity)}`}>
-                    <p className="text-[11px] font-semibold">{alert.title}</p>
-                    <p className="mt-1 text-[11px] leading-5 opacity-85">{alert.message}</p>
-                  </div>
+                {routes.map((route) => (
+                  <RouteCard
+                    key={route.id}
+                    route={route}
+                    selected={route.id === selectedRouteId}
+                    onSelect={() => onSelectRoute(route.id)}
+                  />
                 ))}
               </div>
-            ) : (
-              <p className="text-xs text-white/45">No nearby route warnings at the current position.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Timing note */}
-        <div className="rounded-2xl border border-amber-500/15 bg-amber-500/5 p-3.5">
-          <p className="text-[10px] uppercase tracking-widest text-amber-400/80">Timing advisory</p>
-          <p className="mt-1.5 text-xs leading-5 text-white/55">{displayed.timingNote}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (tab === "assessment") {
-    return (
-      <div className="space-y-4 p-4">
-        {/* Primary assessment */}
-        <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
-          <div className="mb-3 flex items-start justify-between gap-2">
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-white/35">Primary route</p>
-              <p className="mt-1 text-sm font-semibold text-white">{assessment.routeLabel}</p>
             </div>
-            <RiskBadge level={assessment.level} score={assessment.score} />
-          </div>
-          <ScoreMeter score={assessment.score} level={assessment.level} />
-          <p className="mt-3 text-xs leading-5 text-white/50">{assessment.summary}</p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {[
-              { label: "Distance", value: `${assessment.distanceKm}km` },
-              { label: "Incidents", value: assessment.incidents.length },
-              { label: "Risk zones", value: assessment.watchZones.length },
-            ].map((stat) => (
-              <div key={stat.label} className="rounded-xl border border-white/[0.06] bg-[#060B16] p-2.5 text-center">
-                <p className="text-[10px] text-white/30">{stat.label}</p>
-                <p className="mt-1 text-base font-bold text-white">{stat.value}</p>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Alternative route */}
-        {altAssessment && altAssessment.score < assessment.score && (
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-emerald-400/80">Safer alternative</p>
-                <p className="mt-1 text-xs font-medium text-white/70">{altAssessment.routeLabel}</p>
-              </div>
-              <RiskBadge level={altAssessment.level} score={altAssessment.score} />
-            </div>
-            <p className="mb-3 text-xs leading-5 text-white/45">{altAssessment.summary}</p>
-            <button
-              onClick={onToggleAlt}
-              className={`w-full rounded-xl border py-2 text-xs font-semibold uppercase tracking-widest transition ${
-                previewAlt
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                  : "border-white/[0.08] bg-white/[0.03] text-white/50 hover:text-white"
-              }`}
-            >
-              {previewAlt ? "Viewing alternative" : "Preview on map"}
-            </button>
-          </div>
-        )}
-
-        {/* Advisories */}
-        <div className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
-          <p className="mb-3 text-[10px] uppercase tracking-widest text-emerald-400/80">Guidance</p>
-          <div className="space-y-2">
-            {displayed.advisories.map((a, i) => (
-              <div key={i} className="flex gap-2 text-xs leading-5 text-white/50">
-                <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-white/20" />
-                {a}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Threats tab
-  return (
-    <div className="space-y-4 p-4">
-      {/* Incidents */}
-      <div>
-        <p className="mb-2.5 text-[10px] uppercase tracking-widest text-white/35">
-          Route threats ({displayed.incidents.length})
-        </p>
-        {displayed.incidents.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/[0.08] p-4 text-center text-xs text-white/30">
-            No active incidents on this corridor
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {displayed.incidents.slice(0, 5).map((inc) => {
-              const sev = RISK_CONFIG[inc.severity as RiskLevel] ?? RISK_CONFIG.low;
-              return (
-                <div key={inc.id} className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-3.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">{inc.title}</p>
-                      <p className="mt-0.5 truncate text-[11px] text-white/35">{inc.locationName}</p>
+            {/* Selected route detail */}
+            {selectedRoute && (
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                <p className="mb-3 text-[10px] uppercase tracking-widest text-white/30">Route details</p>
+                <ScoreMeter score={selectedRoute.score} level={selectedRoute.level} />
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {[
+                    { label: "ETA", value: formatDuration(selectedRoute.durationMin) },
+                    { label: "Distance", value: formatDistance(selectedRoute.distanceKm) },
+                    { label: "Risk score", value: selectedRoute.score },
+                  ].map((stat) => (
+                    <div key={stat.label} className="rounded-xl border border-white/[0.06] bg-black/30 p-2.5 text-center">
+                      <p className="text-[9px] uppercase tracking-widest text-white/25">{stat.label}</p>
+                      <p className="mt-1 text-sm font-bold text-white">{stat.value}</p>
                     </div>
-                    <span className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${sev.bg} ${sev.border} ${sev.color}`}>
-                      {inc.severity}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-[10px] text-white/30">
-                    <span>{formatType(inc.incidentType)}</span>
-                    <span>{inc.distanceKm.toFixed(1)}km off route · {relativeTime(inc.detectedAt)}</span>
-                  </div>
+                  ))}
                 </div>
-              );
-            })}
-            {displayed.incidents.length > 5 && (
-              <p className="text-center text-[11px] text-white/30">
-                +{displayed.incidents.length - 5} more incidents
-              </p>
+                <div className="mt-3 space-y-1.5">
+                  {selectedRoute.advisories.map((a, i) => (
+                    <div key={i} className="flex gap-2 text-[11px] leading-5 text-white/40">
+                      <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-white/20" />
+                      {a}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}
-      </div>
 
-      {/* Watch zones */}
-      <div>
-        <p className="mb-2.5 text-[10px] uppercase tracking-widest text-white/35">
-          Pressure zones ({displayed.watchZones.length})
-        </p>
-        {displayed.watchZones.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/[0.08] p-4 text-center text-xs text-white/30">
-            No elevated zones on this route
+        {/* THREATS TAB */}
+        {activeTab === "threats" && selectedRoute && (
+          <div className="space-y-4 p-4">
+            <div>
+              <p className="mb-2.5 text-[10px] uppercase tracking-widest text-white/30">
+                Incidents on corridor ({selectedRoute.incidents.length})
+              </p>
+              {selectedRoute.incidents.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/[0.07] p-5 text-center text-xs text-white/25">
+                  No active incidents on this corridor
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {selectedRoute.incidents.slice(0, 6).map((inc) => {
+                    const sev = RISK_CONFIG[inc.severity as RiskLevel] ?? RISK_CONFIG.low;
+                    return (
+                      <div key={inc.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-white">{inc.title}</p>
+                            <p className="mt-0.5 truncate text-[11px] text-white/35">{inc.locationName}</p>
+                          </div>
+                          <span className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-widest ${sev.bg} ${sev.border} ${sev.color}`}>
+                            {inc.severity}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-[10px] text-white/30">
+                          <span>{formatType(inc.incidentType)}</span>
+                          <span className="flex items-center gap-1">
+                            <span>{inc.distanceKm.toFixed(1)}km off route</span>
+                            <span>·</span>
+                            <span>{relativeTime(inc.detectedAt)}</span>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {selectedRoute.incidents.length > 6 && (
+                    <p className="text-center text-[11px] text-white/25">+{selectedRoute.incidents.length - 6} more</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2.5 text-[10px] uppercase tracking-widest text-white/30">
+                Risk zones ({selectedRoute.watchZones.length})
+              </p>
+              {selectedRoute.watchZones.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/[0.07] p-5 text-center text-xs text-white/25">
+                  No elevated zones on this route
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {selectedRoute.watchZones.slice(0, 4).map((z) => (
+                    <div key={z.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-white">{z.name}</p>
+                        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[9px] uppercase tracking-widest text-amber-300">
+                          {z.riskLevel.replace(/_/g, " ")}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex justify-between text-[10px] text-white/30">
+                        <span>Score {z.riskScore.toFixed(0)}</span>
+                        <span>{z.distanceKm.toFixed(1)}km from route</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {loading && <p className="text-center text-[11px] text-white/25">Refreshing intelligence…</p>}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {displayed.watchZones.slice(0, 4).map((z) => (
-              <div key={z.id} className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-3.5">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-white">{z.name}</p>
-                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-amber-300">
-                    {z.riskLevel.replace(/_/g, " ")}
-                  </span>
-                </div>
-                <div className="mt-1.5 flex items-center justify-between text-[10px] text-white/30">
-                  <span>Score {z.riskScore.toFixed(0)}</span>
-                  <span>{z.distanceKm.toFixed(1)}km from route</span>
-                </div>
+        )}
+
+        {/* LIVE TAB */}
+        {activeTab === "live" && (
+          <div className="space-y-3 p-4">
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase tracking-widest text-white/30">Live tracking</p>
+                <button
+                  onClick={onToggleTracking}
+                  className={`rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest transition ${
+                    trackingEnabled
+                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                      : "border-white/[0.07] text-white/40 hover:text-white/70"
+                  }`}
+                >
+                  {trackingEnabled ? "● Stop" : "Start tracking"}
+                </button>
               </div>
-            ))}
+
+              {trackingEnabled && livePosition ? (
+                <div className="mt-3 space-y-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-white/[0.06] bg-black/30 p-2.5">
+                      <p className="text-[9px] text-white/25">Latitude</p>
+                      <p className="text-sm font-bold text-white">{livePosition.latitude.toFixed(5)}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/[0.06] bg-black/30 p-2.5">
+                      <p className="text-[9px] text-white/25">Longitude</p>
+                      <p className="text-sm font-bold text-white">{livePosition.longitude.toFixed(5)}</p>
+                    </div>
+                    {livePosition.speedKph !== null && (
+                      <div className="rounded-xl border border-white/[0.06] bg-black/30 p-2.5">
+                        <p className="text-[9px] text-white/25">Speed</p>
+                        <p className="text-sm font-bold text-white">{livePosition.speedKph.toFixed(0)} km/h</p>
+                      </div>
+                    )}
+                    {livePosition.accuracy !== null && (
+                      <div className="rounded-xl border border-white/[0.06] bg-black/30 p-2.5">
+                        <p className="text-[9px] text-white/25">Accuracy</p>
+                        <p className="text-sm font-bold text-white">±{Math.round(livePosition.accuracy)}m</p>
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-white/30">Updated {relativeTime(livePosition.updatedAt)}</p>
+                </div>
+              ) : trackingError ? (
+                <p className="mt-3 text-xs text-amber-300">{trackingError}</p>
+              ) : (
+                <p className="mt-3 text-xs text-white/35">
+                  Start tracking to follow your live {travelMode} position on the map and receive proximity alerts.
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase tracking-widest text-white/30">Active warnings</p>
+                <span className={`text-[10px] font-bold ${liveAlerts.length > 0 ? "text-amber-300" : "text-white/25"}`}>
+                  {liveAlerts.length}
+                </span>
+              </div>
+              {liveAlerts.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  {liveAlerts.slice(0, 4).map((alert) => (
+                    <div key={alert.id} className={`rounded-xl border px-3 py-2.5 ${alertTone(alert.severity)}`}>
+                      <p className="text-xs font-semibold">{alert.title}</p>
+                      <p className="mt-0.5 text-[11px] leading-5 opacity-80">{alert.message}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-white/30">No proximity warnings at your current position.</p>
+              )}
+            </div>
           </div>
         )}
       </div>
-
-      {loading && (
-        <p className="text-center text-[11px] text-white/30">Refreshing intelligence…</p>
-      )}
     </div>
   );
-}
-
-function pushLiveAlert(
-  setLiveAlerts: Dispatch<SetStateAction<LiveAlert[]>>,
-  nextAlert: LiveAlert,
-) {
-  setLiveAlerts((current) => {
-    const deduped = current.filter((alert) => alert.id !== nextAlert.id);
-    return [nextAlert, ...deduped].slice(0, 6);
-  });
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function RouteIntelligencePage() {
   const role = getCurrentRole();
-
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navItems = useMemo<NavItem[]>(() => getPublicNavItems(role), [role]);
-  const [panelExpanded, setPanelExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>("planner");
+  const [activeTab, setActiveTab] = useState<PanelTab>("routes");
+  const [sheetExpanded, setSheetExpanded] = useState(false);
 
+  // Route state
   const [originId, setOriginId] = useState("benin");
   const [destinationId, setDestinationId] = useState("abuja");
   const [customOrigin, setCustomOrigin] = useState<RouteHub | null>(null);
@@ -1172,9 +1229,11 @@ export default function RouteIntelligencePage() {
   const [destinationInput, setDestinationInput] = useState("Abuja");
   const [originSuggestions, setOriginSuggestions] = useState<RouteHubSuggestion[]>([]);
   const [destinationSuggestions, setDestinationSuggestions] = useState<RouteHubSuggestion[]>([]);
-  const [departureHour, setDepartureHour] = useState(20);
-  const [previewAlt, setPreviewAlt] = useState(false);
+  const [departureHour, setDepartureHour] = useState(new Date().getHours());
+  const [selectedRouteId, setSelectedRouteId] = useState("direct");
   const [travelMode, setTravelMode] = useState<TravelMode>("drive");
+
+  // Live tracking
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [livePosition, setLivePosition] = useState<LivePosition | null>(null);
   const [originLocation, setOriginLocation] = useState<LivePosition | null>(null);
@@ -1189,18 +1248,9 @@ export default function RouteIntelligencePage() {
   const recentRouteAlertRef = useRef<Record<string, number>>({});
   const incidentSnapshotRef = useRef<Record<number, string>>({});
   const incidentFeedPrimedRef = useRef(false);
-  const liveContextRef = useRef<{
-    corridorKm: number;
-    routePath: Array<[number, number]>;
-    travelMode: TravelMode;
-    livePosition: LivePosition | null;
-  }>({
-    corridorKm: 0,
-    routePath: [],
-    travelMode: "drive",
-    livePosition: null,
-  });
+  const liveContextRef = useRef({ corridorKm: 0, routePath: [] as Array<[number, number]>, travelMode: "drive" as TravelMode, livePosition: null as LivePosition | null });
 
+  // Data
   const [authToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("geopulse.token"),
   );
@@ -1209,43 +1259,7 @@ export default function RouteIntelligencePage() {
   const [geofences, setGeofences] = useState<GeofenceRecord[]>([]);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [loading, setLoading] = useState(Boolean(authToken));
-  const geolocationSupported =
-    typeof window !== "undefined" && typeof navigator !== "undefined" && Boolean(navigator.geolocation);
-
-  const resolveCurrentLocation = useCallback(() => {
-    if (!geolocationSupported || !navigator.geolocation) {
-      setCurrentLocationStatus("Geolocation is not available on this device.");
-      setUseCurrentLocation(false);
-      return;
-    }
-
-    setCurrentLocationStatus("Locating your current position...");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const nextLocation = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
-          speedKph: typeof position.coords.speed === "number" && Number.isFinite(position.coords.speed)
-            ? position.coords.speed * 3.6
-            : null,
-          heading: typeof position.coords.heading === "number" && Number.isFinite(position.coords.heading)
-            ? position.coords.heading
-            : null,
-          updatedAt: new Date(position.timestamp).toISOString(),
-        };
-        setOriginLocation(nextLocation);
-        setUseCurrentLocation(true);
-        setCurrentLocationStatus("Using your current location as the route origin.");
-      },
-      () => {
-        setOriginLocation(null);
-        setUseCurrentLocation(false);
-        setCurrentLocationStatus("Could not read your location. Select a city instead.");
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
-  }, [geolocationSupported]);
+  const geolocationSupported = typeof window !== "undefined" && Boolean(navigator?.geolocation);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
@@ -1273,65 +1287,33 @@ export default function RouteIntelligencePage() {
         if (iRes.ok) {
           const nextIncidents = getList(iData) as IncidentRecord[];
           const nextSnapshot = Object.fromEntries(
-            nextIncidents.map((incident) => [incident.id, incident.detected_at || incident.created_at || ""]),
+            nextIncidents.map((inc) => [inc.id, inc.detected_at || inc.created_at || ""]),
           );
-
           if (incidentFeedPrimedRef.current) {
-            const context = liveContextRef.current;
-            const routeProjection = context.livePosition
-              ? projectToPathKm(context.livePosition.latitude, context.livePosition.longitude, context.routePath)
-              : null;
-            const newIncidents = nextIncidents
-              .filter((incident) => {
-                const marker = incident.detected_at || incident.created_at || "";
-                return incidentSnapshotRef.current[incident.id] !== marker;
-              })
-              .filter((incident) => {
-                const lat = toNumber(incident.latitude);
-                const lng = toNumber(incident.longitude);
+            const ctx = liveContextRef.current;
+            nextIncidents
+              .filter((inc) => incidentSnapshotRef.current[inc.id] !== (inc.detected_at || inc.created_at || ""))
+              .filter((inc) => {
+                const lat = toNumber(inc.latitude), lng = toNumber(inc.longitude);
                 if (lat === null || lng === null) return false;
-                const routeOffsetKm = ptToPathKm(lat, lng, context.routePath);
-                const userDistanceKm = context.livePosition
-                  ? haversine(context.livePosition.latitude, context.livePosition.longitude, lat, lng)
-                  : Infinity;
-                return (
-                  routeOffsetKm <= context.corridorKm + 5 ||
-                  userDistanceKm <= routeAheadLookaheadKm(context.travelMode)
-                );
+                return ptToPathKm(lat, lng, ctx.routePath) <= ctx.corridorKm + 5;
               })
-              .filter(
-                (incident) =>
-                  isOngoingIncident(incident.status) ||
-                  isRecentTimestamp(incident.detected_at || incident.created_at, 2),
-              )
-              .slice(0, 2);
-
-            newIncidents.forEach((incident) => {
-              const lat = toNumber(incident.latitude);
-              const lng = toNumber(incident.longitude);
-              if (lat === null || lng === null) return;
-
-              const routeOffsetKm = ptToPathKm(lat, lng, context.routePath);
-              const projectionDeltaKm =
-                routeProjection
-                  ? projectToPathKm(lat, lng, context.routePath).alongKm - routeProjection.alongKm
-                  : null;
-              const recentOrOngoing = isOngoingIncident(incident.status) ? "Ongoing" : "Recent";
-
-              pushLiveAlert(setLiveAlerts, {
-                id: `feed-${incident.id}`,
-                title: `${recentOrOngoing} ${formatType(incident.incident_type)} update`,
-                message:
-                  projectionDeltaKm !== null && projectionDeltaKm > 0
-                    ? `${incident.title} was just reported ${projectionDeltaKm.toFixed(1)}km ahead near ${incident.location_name}.`
-                    : `${incident.title} was just reported near ${incident.location_name}, ${routeOffsetKm.toFixed(1)}km off your active route.`,
-                severity: alertSeverityFromIncident(incident.severity),
-                kind: "feed",
-                createdAt: incident.detected_at || incident.created_at || new Date().toISOString(),
+              .filter((inc) => isOngoingIncident(inc.status) || isRecentTimestamp(inc.detected_at, 2))
+              .slice(0, 2)
+              .forEach((inc) => {
+                const lat = toNumber(inc.latitude)!;
+                const lng = toNumber(inc.longitude)!;
+                const routeOffset = ptToPathKm(lat, lng, ctx.routePath);
+                pushLiveAlert(setLiveAlerts, {
+                  id: `feed-${inc.id}`,
+                  title: `${formatType(inc.incident_type)} update`,
+                  message: `${inc.title} reported near ${inc.location_name}, ${routeOffset.toFixed(1)}km off your route.`,
+                  severity: alertSeverityFromIncident(inc.severity),
+                  kind: "feed",
+                  createdAt: inc.detected_at || inc.created_at || new Date().toISOString(),
+                });
               });
-            });
           }
-
           incidentSnapshotRef.current = nextSnapshot;
           incidentFeedPrimedRef.current = true;
           setIncidents(nextIncidents);
@@ -1343,12 +1325,9 @@ export default function RouteIntelligencePage() {
             getList(aData as ApiListResponse<Record<string, unknown>>).map((a, i) => {
               const sev = String(a.severity ?? "info").toLowerCase();
               return {
-                id: Number(a.id ?? i + 1),
-                level: sev === "critical" ? "Critical" : sev === "high" ? "Warning" : "Info",
-                triggeredAt: String(a.triggered_at ?? ""),
-                title: String(a.title ?? "Alert"),
-                body: String(a.message ?? ""),
-                meta: String(a.status ?? "ACTIVE").toUpperCase(),
+                id: Number(a.id ?? i + 1), level: sev === "critical" ? "Critical" : sev === "high" ? "Warning" : "Info",
+                triggeredAt: String(a.triggered_at ?? ""), title: String(a.title ?? "Alert"),
+                body: String(a.message ?? ""), meta: String(a.status ?? "ACTIVE").toUpperCase(),
               };
             }),
           );
@@ -1359,59 +1338,34 @@ export default function RouteIntelligencePage() {
     }
 
     void load();
-    const intervalId = window.setInterval(() => {
-      void load();
-    }, 45000);
-
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-    };
+    const tid = window.setInterval(() => void load(), 45000);
+    return () => { active = false; window.clearInterval(tid); };
   }, [authToken]);
 
   const incidentPoints = useMemo(
-    () =>
-      incidents.flatMap((inc) => {
-        const lat = toNumber(inc.latitude);
-        const lng = toNumber(inc.longitude);
-        if (lat === null || lng === null) return [];
-        return [{
-          id: inc.id,
-          title: inc.title,
-          incidentType: normalizeReportType(inc.incident_type),
-          severity: inc.severity,
-          confidence: inc.confidence,
-          status: inc.status,
-          summary: inc.summary,
-          detectedAt: inc.detected_at || inc.created_at,
-          latitude: lat,
-          longitude: lng,
-          locationName: inc.location_name,
-          visibilityScore: typeof inc.visibility_score === "number" ? inc.visibility_score : undefined,
-        }];
-      }),
+    () => incidents.flatMap((inc) => {
+      const lat = toNumber(inc.latitude), lng = toNumber(inc.longitude);
+      if (lat === null || lng === null) return [];
+      return [{ id: inc.id, title: inc.title, incidentType: normalizeReportType(inc.incident_type), severity: inc.severity, confidence: inc.confidence, status: inc.status, summary: inc.summary, detectedAt: inc.detected_at || inc.created_at, latitude: lat, longitude: lng, locationName: inc.location_name }];
+    }),
     [incidents],
   );
 
   const watchZonePoints = useMemo(
-    () =>
-      watchZones.flatMap((z) => {
-        const lat = toNumber(z.centroid_latitude);
-        const lng = toNumber(z.centroid_longitude);
-        if (lat === null || lng === null) return [];
-        return [{ id: z.id, name: z.name, riskLevel: z.current_risk_level, riskScore: toNumber(z.current_risk_score) ?? 0, latitude: lat, longitude: lng }];
-      }),
+    () => watchZones.flatMap((z) => {
+      const lat = toNumber(z.centroid_latitude), lng = toNumber(z.centroid_longitude);
+      if (lat === null || lng === null) return [];
+      return [{ id: z.id, name: z.name, riskLevel: z.current_risk_level, riskScore: toNumber(z.current_risk_score) ?? 0, latitude: lat, longitude: lng }];
+    }),
     [watchZones],
   );
 
   const geofencePoints = useMemo(
-    () =>
-      geofences.flatMap((g) => {
-        const lat = toNumber(g.centroid_latitude);
-        const lng = toNumber(g.centroid_longitude);
-        if (lat === null || lng === null) return [];
-        return [{ id: g.id, name: g.name, geofenceType: g.geofence_type, status: g.status, description: g.description, radiusMeters: toNumber(g.radius_meters) ?? 0, latitude: lat, longitude: lng }];
-      }),
+    () => geofences.flatMap((g) => {
+      const lat = toNumber(g.centroid_latitude), lng = toNumber(g.centroid_longitude);
+      if (lat === null || lng === null) return [];
+      return [{ id: g.id, name: g.name, geofenceType: g.geofence_type, status: g.status, description: g.description, radiusMeters: toNumber(g.radius_meters) ?? 0, latitude: lat, longitude: lng }];
+    }),
     [geofences],
   );
 
@@ -1420,374 +1374,183 @@ export default function RouteIntelligencePage() {
     () => (useCurrentLocation && originLocation ? makeCurrentLocationHub(originLocation) : null),
     [originLocation, useCurrentLocation],
   );
-  const originSearchState = currentOriginHub?.state ?? customOrigin?.state ?? routeHubs.find((hub) => hub.id === originId)?.state ?? routeHubs[0]?.state ?? "Lagos";
-  const destinationSearchState = customDestination?.state ?? routeHubs.find((hub) => hub.id === destinationId)?.state ?? routeHubs[1]?.state ?? "Lagos";
-
-  const mapCitySuggestions = useCallback((results: Array<{ id: string; label: string; state: string; latitude: number; longitude: number }>): RouteHubSuggestion[] => {
-    return results.map((hub) => ({
-      id: hub.id,
-      label: hub.label,
-      state: hub.state,
-      latitude: hub.latitude,
-      longitude: hub.longitude,
-      description: "City",
-      kind: "city",
-    }));
-  }, []);
-
-  useEffect(() => {
-    if (originInput.trim().length < 2) {
-      return;
-    }
-    let active = true;
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const remote = await searchLocations(originInput, 5);
-        if (!active) return;
-        const stateSuggestions = searchStateSuggestions(originInput, 5)
-          .map((state) => ({ ...state, kind: "state" as const }));
-        const localCities = mapCitySuggestions(
-          searchAreaHubs(originInput, 8).map((hub) => ({
-            id: `area-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
-            label: hub.label,
-            state: hub.state,
-            latitude: hub.latitude,
-            longitude: hub.longitude,
-          })),
-        );
-        const remoteMapped = remote.map((result) => ({
-          id: `remote-${result.id}`,
-          label: result.label,
-          state: result.state,
-          latitude: result.latitude,
-          longitude: result.longitude,
-          description: result.description,
-          kind: "place" as const,
-        }));
-        const merged = [...stateSuggestions, ...localCities, ...remoteMapped].filter(
-          (suggestion, index, self) =>
-            self.findIndex((item) => item.label === suggestion.label && item.state === suggestion.state && item.kind === suggestion.kind) === index,
-        );
-        setOriginSuggestions(merged.slice(0, 8));
-      } catch {
-        if (active) setOriginSuggestions([]);
-      }
-    }, 240);
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [mapCitySuggestions, originInput, originSearchState, routeHubs]);
-
-  useEffect(() => {
-    if (destinationInput.trim().length < 2) {
-      return;
-    }
-    let active = true;
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const remote = await searchLocations(destinationInput, 5);
-        if (!active) return;
-        const stateSuggestions = searchStateSuggestions(destinationInput, 5)
-          .map((state) => ({ ...state, kind: "state" as const }));
-        const localCities = mapCitySuggestions(
-          searchAreaHubs(destinationInput, 8).map((hub) => ({
-            id: `area-${hub.label.toLowerCase().replace(/\s+/g, "-")}`,
-            label: hub.label,
-            state: hub.state,
-            latitude: hub.latitude,
-            longitude: hub.longitude,
-          })),
-        );
-        const remoteMapped = remote.map((result) => ({
-          id: `remote-${result.id}`,
-          label: result.label,
-          state: result.state,
-          latitude: result.latitude,
-          longitude: result.longitude,
-          description: result.description,
-          kind: "place" as const,
-        }));
-        const merged = [...stateSuggestions, ...localCities, ...remoteMapped].filter(
-          (suggestion, index, self) =>
-            self.findIndex((item) => item.label === suggestion.label && item.state === suggestion.state && item.kind === suggestion.kind) === index,
-        );
-        setDestinationSuggestions(merged.slice(0, 8));
-      } catch {
-        if (active) setDestinationSuggestions([]);
-      }
-    }, 240);
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [destinationInput, destinationSearchState, mapCitySuggestions, routeHubs]);
-
   const origin = currentOriginHub ?? customOrigin ?? routeHubs.find((h) => h.id === originId) ?? routeHubs[0];
   const destination = customDestination ?? routeHubs.find((h) => h.id === destinationId) ?? routeHubs[1];
 
-  const primaryAssessment = useMemo(
-    () => buildAssessment(origin, destination, departureHour, incidentPoints, watchZonePoints),
-    [origin, destination, departureHour, incidentPoints, watchZonePoints],
+  const allRoutes = useMemo(
+    () => buildAllRouteOptions(origin, destination, departureHour, travelMode, incidentPoints, watchZonePoints, routeHubs),
+    [origin, destination, departureHour, travelMode, incidentPoints, watchZonePoints, routeHubs],
   );
 
-  const altAssessment = useMemo(
-    () => findAlternative(origin, destination, departureHour, incidentPoints, watchZonePoints, routeHubs),
-    [origin, destination, departureHour, incidentPoints, watchZonePoints, routeHubs],
-  );
+  // Auto-select best route when routes change
+  useEffect(() => {
+    const best = allRoutes.find((r) => r.isBest);
+    if (best) setSelectedRouteId(best.id);
+  }, [allRoutes]);
 
-  const displayed = previewAlt && altAssessment ? altAssessment : primaryAssessment;
-  const cfg = RISK_CONFIG[displayed.level];
-  const effectiveTrackingError =
-    trackingError || (!geolocationSupported && trackingEnabled ? "Geolocation is not available on this device." : "");
-  const heatmapEnabled = true;
-  const liveRouteOffsetKm = useMemo(
-    () => (livePosition ? ptToPathKm(livePosition.latitude, livePosition.longitude, displayed.routePath) : null),
-    [displayed.routePath, livePosition],
-  );
+  const selectedRoute = allRoutes.find((r) => r.id === selectedRouteId) ?? allRoutes[0];
 
   useEffect(() => {
-    liveContextRef.current = {
-      corridorKm: displayed.corridorKm,
-      routePath: displayed.routePath,
-      travelMode,
-      livePosition,
-    };
-  }, [displayed.corridorKm, displayed.routePath, livePosition, travelMode]);
+    if (!selectedRoute) return;
+    liveContextRef.current = { corridorKm: selectedRoute.corridorKm, routePath: selectedRoute.routePath, travelMode, livePosition };
+  }, [selectedRoute, livePosition, travelMode]);
 
+  // Suggestion search – origin
   useEffect(() => {
-    if (!trackingEnabled) {
-      if (watchIdRef.current !== null && typeof navigator !== "undefined" && navigator.geolocation) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-      watchIdRef.current = null;
-      return;
-    }
+    if (originInput.trim().length < 2) { setOriginSuggestions([]); return; }
+    let active = true;
+    const tid = window.setTimeout(async () => {
+      try {
+        const [remote, states, cities] = await Promise.all([
+          searchLocations(originInput, 5),
+          Promise.resolve(searchStateSuggestions(originInput, 3).map((s) => ({ ...s, kind: "state" as const }))),
+          Promise.resolve(searchAreaHubs(originInput, 6).map((h) => ({
+            id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`, label: h.label, state: h.state,
+            latitude: h.latitude, longitude: h.longitude, description: "City", kind: "city" as const,
+          }))),
+        ]);
+        if (!active) return;
+        const merged = [
+          ...states,
+          ...cities,
+          ...remote.map((r) => ({ id: `r-${r.id}`, label: r.label, state: r.state, latitude: r.latitude, longitude: r.longitude, description: r.description, kind: "place" as const })),
+        ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
+        setOriginSuggestions(merged.slice(0, 8));
+      } catch { if (active) setOriginSuggestions([]); }
+    }, 220);
+    return () => { active = false; window.clearTimeout(tid); };
+  }, [originInput]);
 
-    if (!geolocationSupported || !navigator.geolocation) {
-      return;
-    }
+  // Suggestion search – destination
+  useEffect(() => {
+    if (destinationInput.trim().length < 2) { setDestinationSuggestions([]); return; }
+    let active = true;
+    const tid = window.setTimeout(async () => {
+      try {
+        const [remote, states, cities] = await Promise.all([
+          searchLocations(destinationInput, 5),
+          Promise.resolve(searchStateSuggestions(destinationInput, 3).map((s) => ({ ...s, kind: "state" as const }))),
+          Promise.resolve(searchAreaHubs(destinationInput, 6).map((h) => ({
+            id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`, label: h.label, state: h.state,
+            latitude: h.latitude, longitude: h.longitude, description: "City", kind: "city" as const,
+          }))),
+        ]);
+        if (!active) return;
+        const merged = [
+          ...states,
+          ...cities,
+          ...remote.map((r) => ({ id: `r-${r.id}`, label: r.label, state: r.state, latitude: r.latitude, longitude: r.longitude, description: r.description, kind: "place" as const })),
+        ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
+        setDestinationSuggestions(merged.slice(0, 8));
+      } catch { if (active) setDestinationSuggestions([]); }
+    }, 220);
+    return () => { active = false; window.clearTimeout(tid); };
+  }, [destinationInput]);
 
+  // Live tracking effect
+  useEffect(() => {
+    if (!trackingEnabled || !geolocationSupported) return;
     watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
-        const speedMps = position.coords.speed;
-        const nextPosition = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
+        const next: LivePosition = {
+          latitude: position.coords.latitude, longitude: position.coords.longitude,
           accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
-          speedKph: typeof speedMps === "number" && Number.isFinite(speedMps) ? speedMps * 3.6 : null,
-          heading: typeof position.coords.heading === "number" && Number.isFinite(position.coords.heading)
-            ? position.coords.heading
-            : null,
+          speedKph: typeof position.coords.speed === "number" && Number.isFinite(position.coords.speed) ? position.coords.speed * 3.6 : null,
+          heading: typeof position.coords.heading === "number" && Number.isFinite(position.coords.heading) ? position.coords.heading : null,
           updatedAt: new Date(position.timestamp).toISOString(),
         };
-        setLivePosition(nextPosition);
-
+        setLivePosition(next);
         const now = Date.now();
-        const proximityRadiusKm = incidentAlertRadiusKm(travelMode);
-        const userProjection = projectToPathKm(
-          nextPosition.latitude,
-          nextPosition.longitude,
-          displayed.routePath,
-        );
-        const aheadWindowKm = routeAheadLookaheadKm(travelMode);
-        const incidentsNearby = incidentPoints
-          .map((incident) => ({
-            incident,
-            distanceKm: haversine(
-              nextPosition.latitude,
-              nextPosition.longitude,
-              incident.latitude,
-              incident.longitude,
-            ),
-            routeDistanceKm: ptToPathKm(incident.latitude, incident.longitude, displayed.routePath),
-          }))
-          .filter(
-            ({ distanceKm, routeDistanceKm }) =>
-              distanceKm <= proximityRadiusKm && routeDistanceKm <= displayed.corridorKm + 5,
-          )
-          .sort((left, right) => left.distanceKm - right.distanceKm);
+        if (!selectedRoute) return;
 
-        incidentsNearby.slice(0, 2).forEach(({ incident, distanceKm }) => {
-          const lastAlertAt = recentIncidentAlertRef.current[incident.id] ?? 0;
-          if (now - lastAlertAt < 120000) return;
-          recentIncidentAlertRef.current[incident.id] = now;
-          pushLiveAlert(setLiveAlerts, {
-            id: `incident-${incident.id}`,
-            title: `${formatType(incident.incidentType)} nearby`,
-            message: `${incident.title} is ${distanceKm.toFixed(1)}km from your current ${travelMode} position near ${incident.locationName}.`,
-            severity: alertSeverityFromIncident(incident.severity),
-            kind: "incident",
-            createdAt: nextPosition.updatedAt,
+        // Nearby incident alerts
+        incidentPoints
+          .map((inc) => ({ inc, dist: haversine(next.latitude, next.longitude, inc.latitude, inc.longitude) }))
+          .filter(({ dist }) => dist <= (travelMode === "walk" ? 1.2 : 5))
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, 2)
+          .forEach(({ inc, dist }) => {
+            const last = recentIncidentAlertRef.current[inc.id] ?? 0;
+            if (now - last < 120000) return;
+            recentIncidentAlertRef.current[inc.id] = now;
+            pushLiveAlert(setLiveAlerts, {
+              id: `incident-${inc.id}`,
+              title: `${formatType(inc.incidentType)} nearby`,
+              message: `${inc.title} is ${dist.toFixed(1)}km from your position near ${inc.locationName}.`,
+              severity: alertSeverityFromIncident(inc.severity),
+              kind: "incident",
+              createdAt: next.updatedAt,
+            });
           });
-        });
 
-        const incidentsAhead = incidentPoints
-          .map((incident) => {
-            const incidentProjection = projectToPathKm(
-              incident.latitude,
-              incident.longitude,
-              displayed.routePath,
-            );
-            return {
-              incident,
-              distanceKm: haversine(
-                nextPosition.latitude,
-                nextPosition.longitude,
-                incident.latitude,
-                incident.longitude,
-              ),
-              aheadKm: incidentProjection.alongKm - userProjection.alongKm,
-              offsetKm: incidentProjection.offsetKm,
-            };
-          })
-          .filter(
-            ({ aheadKm, offsetKm }) =>
-              aheadKm > 0.2 && aheadKm <= aheadWindowKm && offsetKm <= Math.max(displayed.corridorKm, 6),
-          )
-          .sort((left, right) => left.aheadKm - right.aheadKm);
-
-        incidentsAhead.slice(0, 2).forEach(({ incident, aheadKm }) => {
-          const alertKey = `route-ahead-incident-${incident.id}`;
-          const lastAlertAt = recentRouteAlertRef.current[alertKey] ?? 0;
-          if (now - lastAlertAt < 180000) return;
-          recentRouteAlertRef.current[alertKey] = now;
-          pushLiveAlert(setLiveAlerts, {
-            id: alertKey,
-            title: `${formatType(incident.incidentType)} ahead on route`,
-            message: `${incident.title} is ${aheadKm.toFixed(1)}km ahead near ${incident.locationName}.`,
-            severity: alertSeverityFromIncident(incident.severity),
-            kind: "route_ahead",
-            createdAt: nextPosition.updatedAt,
-          });
-        });
-
+        // Watch zone alerts
         const nextZoneKeys = new Set<string>();
-        watchZonePoints.forEach((zone) => {
-          const distanceKm = haversine(
-            nextPosition.latitude,
-            nextPosition.longitude,
-            zone.latitude,
-            zone.longitude,
-          );
-          const triggerRadiusKm = watchZoneEntryRadiusKm(zone.riskLevel);
-          const key = `watch-zone-${zone.id}`;
-          if (distanceKm <= triggerRadiusKm) {
+        watchZonePoints.forEach((z) => {
+          const dist = haversine(next.latitude, next.longitude, z.latitude, z.longitude);
+          const radius = z.riskLevel.includes("critical") ? 10 : z.riskLevel.includes("high") ? 8 : 6;
+          const key = `wz-${z.id}`;
+          if (dist <= radius) {
             nextZoneKeys.add(key);
             if (!activeZoneKeysRef.current.has(key)) {
               pushLiveAlert(setLiveAlerts, {
-                id: key,
-                title: "Entering high-risk zone",
-                message: `${zone.name} is now within ${distanceKm.toFixed(1)}km. Current zone score is ${zone.riskScore.toFixed(0)}.`,
-                severity:
-                  zone.riskLevel.includes("critical") || zone.riskLevel.includes("high")
-                    ? "critical"
-                    : "warning",
-                kind: "watch_zone",
-                createdAt: nextPosition.updatedAt,
+                id: key, title: "Entering risk zone",
+                message: `${z.name} is within ${dist.toFixed(1)}km. Zone score: ${z.riskScore.toFixed(0)}.`,
+                severity: z.riskLevel.includes("critical") || z.riskLevel.includes("high") ? "critical" : "warning",
+                kind: "watch_zone", createdAt: next.updatedAt,
               });
             }
           }
         });
         activeZoneKeysRef.current = nextZoneKeys;
-
-        const zonesAhead = watchZonePoints
-          .map((zone) => {
-            const zoneProjection = projectToPathKm(zone.latitude, zone.longitude, displayed.routePath);
-            return {
-              zone,
-              aheadKm: zoneProjection.alongKm - userProjection.alongKm,
-              offsetKm: zoneProjection.offsetKm,
-            };
-          })
-          .filter(
-            ({ aheadKm, offsetKm }) =>
-              aheadKm > 0.5 && aheadKm <= aheadWindowKm + 4 && offsetKm <= Math.max(displayed.corridorKm + 4, 8),
-          )
-          .sort((left, right) => left.aheadKm - right.aheadKm);
-
-        zonesAhead.slice(0, 1).forEach(({ zone, aheadKm }) => {
-          const alertKey = `route-ahead-zone-${zone.id}`;
-          const lastAlertAt = recentRouteAlertRef.current[alertKey] ?? 0;
-          if (now - lastAlertAt < 240000) return;
-          recentRouteAlertRef.current[alertKey] = now;
-          pushLiveAlert(setLiveAlerts, {
-            id: alertKey,
-            title: `${formatType(zone.riskLevel)} risk zone ahead`,
-            message: `${zone.name} is ${aheadKm.toFixed(1)}km ahead on your active route.`,
-            severity:
-              zone.riskLevel.includes("critical") || zone.riskLevel.includes("high") ? "critical" : "warning",
-            kind: "route_ahead",
-            createdAt: nextPosition.updatedAt,
-          });
-        });
-
-        const nextGeofenceKeys = new Set<string>();
-        geofencePoints.forEach((geofence) => {
-          const distanceKm = haversine(
-            nextPosition.latitude,
-            nextPosition.longitude,
-            geofence.latitude,
-            geofence.longitude,
-          );
-          const triggerRadiusKm = Math.max(
-            (geofence.radiusMeters || 0) / 1000,
-            travelMode === "drive" ? 0.75 : 0.25,
-          );
-          const key = `geofence-${geofence.id}`;
-          if (distanceKm <= triggerRadiusKm) {
-            nextGeofenceKeys.add(key);
-            if (!activeGeofenceKeysRef.current.has(key)) {
-              pushLiveAlert(setLiveAlerts, {
-                id: key,
-                title: `Entering ${formatType(geofence.geofenceType)} zone`,
-                message: `${geofence.name} is now within your active movement radius.`,
-                severity:
-                  geofence.geofenceType === "school" || geofence.geofenceType === "facility"
-                    ? "warning"
-                    : "info",
-                kind: "geofence",
-                createdAt: nextPosition.updatedAt,
-              });
-            }
-          }
-        });
-        activeGeofenceKeysRef.current = nextGeofenceKeys;
       },
-      (error) => {
-        setTrackingError(error.message || "Unable to read live position.");
-        setTrackingEnabled(false);
-      },
-      {
-        enableHighAccuracy: travelMode === "walk",
-        maximumAge: travelMode === "drive" ? 4000 : 2000,
-        timeout: travelMode === "drive" ? 12000 : 9000,
-      },
+      (err) => { setTrackingError(err.message); setTrackingEnabled(false); },
+      { enableHighAccuracy: travelMode === "walk", maximumAge: travelMode === "drive" ? 4000 : 2000, timeout: 12000 },
     );
-
     return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
+      if (watchIdRef.current !== null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
     };
-  }, [
-    displayed.corridorKm,
-    displayed.routePath,
-    geofencePoints,
-    geolocationSupported,
-    incidentPoints,
-    trackingEnabled,
-    travelMode,
-    watchZonePoints,
-  ]);
+  }, [trackingEnabled, travelMode, geolocationSupported, incidentPoints, watchZonePoints, selectedRoute]);
 
-  useEffect(() => {
-    activeZoneKeysRef.current = new Set();
-    activeGeofenceKeysRef.current = new Set();
-    recentIncidentAlertRef.current = {};
-    recentRouteAlertRef.current = {};
-  }, [displayed.routeLabel, trackingEnabled, travelMode]);
+  const resolveCurrentLocation = useCallback(() => {
+    if (!geolocationSupported) { setCurrentLocationStatus("Geolocation not available on this device."); return; }
+    setCurrentLocationStatus("Finding your location…");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const loc: LivePosition = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy ?? null, speedKph: null, heading: null, updatedAt: new Date().toISOString() };
+        setOriginLocation(loc);
+        setUseCurrentLocation(true);
+        setCurrentLocationStatus("Using your current location as origin.");
+      },
+      () => { setUseCurrentLocation(false); setCurrentLocationStatus("Could not read your location. Please type an address instead."); },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }, [geolocationSupported]);
+
+  const handleSelectOriginSugg = useCallback((s: RouteHubSuggestion) => {
+    const local = routeHubs.find((h) => h.label === s.label);
+    if (local) { setCustomOrigin(null); setOriginId(local.id); }
+    else { const hub = makeRouteHubFromSuggestion(s, "origin"); setCustomOrigin(hub); setOriginId(hub.id); }
+    setOriginInput(s.label);
+    setOriginSuggestions([]);
+    setUseCurrentLocation(false);
+    setCurrentLocationStatus("");
+  }, [routeHubs]);
+
+  const handleSelectDestinationSugg = useCallback((s: RouteHubSuggestion) => {
+    const local = routeHubs.find((h) => h.label === s.label);
+    if (local) { setCustomDestination(null); setDestinationId(local.id); }
+    else { const hub = makeRouteHubFromSuggestion(s, "destination"); setCustomDestination(hub); setDestinationId(hub.id); }
+    setDestinationInput(s.label);
+    setDestinationSuggestions([]);
+  }, [routeHubs]);
+
+  const handleSwap = useCallback(() => {
+    setOriginId(destinationId); setDestinationId(originId);
+    setCustomOrigin(customDestination); setCustomDestination(customOrigin);
+    setOriginInput(destinationInput); setDestinationInput(originInput);
+    setOriginSuggestions([]); setDestinationSuggestions([]);
+    setUseCurrentLocation(false); setCurrentLocationStatus("");
+  }, [originId, destinationId, customOrigin, customDestination, originInput, destinationInput]);
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem("geopulse.token");
@@ -1797,92 +1560,43 @@ export default function RouteIntelligencePage() {
 
   const handleNav = useCallback((i: number) => {
     const next = navItems[i];
-    if (next) {
-      router.push(next.path);
-    }
+    if (next) router.push(next.path);
   }, [navItems, router]);
-
-  const handleUseCurrentLocation = useCallback(() => {
-    setOriginId(CURRENT_LOCATION_HUB_ID);
-    setOriginInput("My location");
-    resolveCurrentLocation();
-  }, [resolveCurrentLocation]);
-
-  const handleSelectOriginSuggestion = useCallback((suggestion: RouteHubSuggestion) => {
-    const localMatch = routeHubs.find((hub) => hub.id === suggestion.id || hub.label === suggestion.label);
-    if (suggestion.kind === "state") {
-      const hub = makeRouteHubFromSuggestion(suggestion, "origin");
-      setCustomOrigin(hub);
-      setOriginId(hub.id);
-      setOriginInput(hub.label);
-    } else if (localMatch) {
-      setCustomOrigin(null);
-      setOriginId(localMatch.id);
-      setOriginInput(localMatch.label);
-    } else {
-      const hub = makeRouteHubFromLocation(
-        {
-          id: suggestion.id,
-          label: suggestion.label,
-          description: suggestion.description,
-          latitude: suggestion.latitude,
-          longitude: suggestion.longitude,
-          state: suggestion.state,
-        },
-        "origin",
-      );
-      setCustomOrigin(hub);
-      setOriginId(hub.id);
-      setOriginInput(hub.label);
-    }
-    setUseCurrentLocation(false);
-    setCurrentLocationStatus("");
-    setOriginSuggestions([]);
-  }, [routeHubs]);
-
-  const handleSelectDestinationSuggestion = useCallback((suggestion: RouteHubSuggestion) => {
-    const localMatch = routeHubs.find((hub) => hub.id === suggestion.id || hub.label === suggestion.label);
-    if (suggestion.kind === "state") {
-      const hub = makeRouteHubFromSuggestion(suggestion, "destination");
-      setCustomDestination(hub);
-      setDestinationId(hub.id);
-      setDestinationInput(hub.label);
-    } else if (localMatch) {
-      setCustomDestination(null);
-      setDestinationId(localMatch.id);
-      setDestinationInput(localMatch.label);
-    } else {
-      const hub = makeRouteHubFromLocation(
-        {
-          id: suggestion.id,
-          label: suggestion.label,
-          description: suggestion.description,
-          latitude: suggestion.latitude,
-          longitude: suggestion.longitude,
-          state: suggestion.state,
-        },
-        "destination",
-      );
-      setCustomDestination(hub);
-      setDestinationId(hub.id);
-      setDestinationInput(hub.label);
-    }
-    setDestinationSuggestions([]);
-  }, [routeHubs]);
 
   if (!mounted) return null;
 
-  const TABS: { id: Tab; label: string }[] = [
-    { id: "planner", label: "Planner" },
-    { id: "assessment", label: "Assessment" },
-    { id: "threats", label: `Threats ${displayed.incidents.length > 0 ? `(${displayed.incidents.length})` : ""}` },
-  ];
+  const panelProps = {
+    routes: allRoutes,
+    selectedRouteId,
+    onSelectRoute: setSelectedRouteId,
+    activeTab,
+    onTabChange: setActiveTab,
+    originInput, destinationInput, originSuggestions, destinationSuggestions,
+    departureHour, travelMode,
+    onOriginChange: (v: string) => setOriginInput(v),
+    onDestinationChange: (v: string) => setDestinationInput(v),
+    onSelectOriginSugg: handleSelectOriginSugg,
+    onSelectDestinationSugg: handleSelectDestinationSugg,
+    onClearOrigin: () => { setOriginInput(""); setOriginSuggestions([]); },
+    onClearDestination: () => { setDestinationInput(""); setDestinationSuggestions([]); },
+    onHourChange: setDepartureHour,
+    onSwap: handleSwap,
+    onTravelModeChange: setTravelMode,
+    trackingEnabled, livePosition, useCurrentLocation,
+    onUseCurrentLocation: resolveCurrentLocation,
+    currentLocationStatus,
+    trackingError: trackingError || (!geolocationSupported && trackingEnabled ? "Geolocation unavailable on this device." : ""),
+    liveAlerts,
+    onToggleTracking: () => { setTrackingError(""); setTrackingEnabled((v) => !v); },
+    loading,
+  };
 
   return (
     <div className="min-h-screen bg-[#060B16] text-white antialiased lg:h-screen lg:overflow-hidden">
-      {/* Ambient background */}
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_50%_at_0%_0%,rgba(6,182,212,0.04),transparent)]" />
-      <LiveWarningStack alerts={liveAlerts} />
+      {/* Ambient */}
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_40%_at_0%_0%,rgba(6,182,212,0.05),transparent)]" />
+
+      <LiveAlertBanner alerts={liveAlerts} onDismiss={(id) => setLiveAlerts((a) => a.filter((x) => x.id !== id))} />
 
       <DashboardSidebar
         open={sidebarOpen}
@@ -1893,36 +1607,38 @@ export default function RouteIntelligencePage() {
         role={role}
       />
 
-      {/* ── Desktop layout ── */}
+      {/* ══ DESKTOP LAYOUT ══ */}
       <div className="hidden h-screen flex-col overflow-hidden lg:ml-64 lg:flex">
         {/* Top bar */}
-        <header className="z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] bg-[#060B16]/90 px-6 backdrop-blur-xl">
+        <header className="z-20 flex h-14 shrink-0 items-center justify-between border-b border-white/[0.05] bg-[#060B16]/90 px-6 backdrop-blur-xl">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/8 px-3 py-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
               <span className="text-[10px] uppercase tracking-widest text-cyan-400">Route Intelligence</span>
             </div>
-            <span className="text-sm text-white/40">{displayed.routeLabel}</span>
+            {selectedRoute && (
+              <span className="hidden text-sm text-white/35 xl:block">{selectedRoute.routeStops.map((s) => s.label).join(" → ")}</span>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            {trackingEnabled ? (
+            {trackingEnabled && (
               <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[10px] uppercase tracking-widest text-emerald-300">
-                {travelMode} mode live
+                ● Live {travelMode}
               </span>
-            ) : null}
-            <RiskBadge level={displayed.level} score={displayed.score} />
-            <span className="text-[11px] text-white/30">{alerts.length} alert{alerts.length !== 1 ? "s" : ""}</span>
+            )}
+            {selectedRoute && <RiskPill level={selectedRoute.level} score={selectedRoute.score} />}
+            {selectedRoute && (
+              <span className="flex items-center gap-1.5 text-xs text-white/35">
+                <IconClock />
+                {formatDuration(selectedRoute.durationMin)}
+              </span>
+            )}
+            <span className="text-[11px] text-white/25">{alerts.length} alert{alerts.length !== 1 ? "s" : ""}</span>
           </div>
         </header>
 
-        {/* Page header */}
-        <div className="shrink-0 border-b border-white/[0.06] px-6 py-5">
-          <h1 className="text-2xl font-bold tracking-tight text-white">Route Safety Analysis</h1>
-          <p className="mt-1 text-sm text-white/40">Signal-weighted corridor analysis with live incident and watch zone data.</p>
-        </div>
-
-        {/* Desktop two-column */}
-        <div className="grid min-h-0 flex-1 grid-cols-[1fr_380px] overflow-hidden">
+        {/* Two-column */}
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_400px] overflow-hidden">
           {/* Map */}
           <div className="relative min-h-0">
             <DashboardMap
@@ -1933,95 +1649,22 @@ export default function RouteIntelligencePage() {
               watchZones={watchZonePoints}
               geofences={geofencePoints}
               showControlsUi={false}
-              routePath={displayed.routePath}
-              routeStops={displayed.routeStops}
-              trackedPosition={livePosition ? {
-                latitude: livePosition.latitude,
-                longitude: livePosition.longitude,
-                label: "Live position",
-              } : null}
+              routePath={selectedRoute?.routePath}
+              routeStops={selectedRoute?.routeStops}
+              trackedPosition={livePosition ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" } : null}
               followTrackedPosition={trackingEnabled}
-              showIncidents
-              showHeatmap
-              showRiskZones
-              showGeofencing={false}
+              showIncidents showHeatmap showRiskZones showGeofencing={false}
             />
           </div>
 
           {/* Panel */}
           <div className="flex min-h-0 flex-col overflow-hidden border-l border-white/[0.06]">
-            {/* Tabs */}
-            <div className="flex border-b border-white/[0.06]">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setActiveTab(t.id)}
-                  className={`flex-1 py-3 text-[11px] font-semibold uppercase tracking-widest transition ${
-                    activeTab === t.id
-                      ? "border-b-2 border-cyan-400 text-cyan-300"
-                      : "text-white/35 hover:text-white/60"
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            {/* Scrollable content */}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <PanelContent
-                tab={activeTab}
-                assessment={primaryAssessment}
-                altAssessment={altAssessment}
-                originInput={originInput}
-                destinationInput={destinationInput}
-                originSuggestions={originSuggestions}
-                destinationSuggestions={destinationSuggestions}
-                departureHour={departureHour}
-                previewAlt={previewAlt}
-                loading={loading}
-                travelMode={travelMode}
-                trackingEnabled={trackingEnabled}
-                livePosition={livePosition}
-                useCurrentLocation={useCurrentLocation}
-                onUseCurrentLocation={handleUseCurrentLocation}
-                currentLocationStatus={currentLocationStatus}
-                trackingError={effectiveTrackingError}
-                liveAlerts={liveAlerts}
-                heatmapEnabled={heatmapEnabled}
-                onOriginInputChange={(value) => {
-                  setOriginInput(value);
-                  if (value.trim().length < 2) setOriginSuggestions([]);
-                }}
-                onDestinationInputChange={(value) => {
-                  setDestinationInput(value);
-                  if (value.trim().length < 2) setDestinationSuggestions([]);
-                }}
-                onSelectOriginSuggestion={handleSelectOriginSuggestion}
-                onSelectDestinationSuggestion={handleSelectDestinationSuggestion}
-                onHourChange={setDepartureHour}
-                onSwap={() => {
-                  setOriginId(destinationId);
-                  setDestinationId(originId);
-                  setCustomOrigin(customDestination);
-                  setCustomDestination(customOrigin);
-                  setOriginInput(destination.label);
-                  setDestinationInput(origin.label);
-                  setOriginSuggestions([]);
-                  setDestinationSuggestions([]);
-                }}
-                onToggleAlt={() => setPreviewAlt((v) => !v)}
-                onTravelModeChange={setTravelMode}
-                onToggleTracking={() => {
-                  setTrackingError("");
-                  setTrackingEnabled((value) => !value);
-                }}
-              />
-            </div>
+            <MainPanel {...panelProps} />
           </div>
         </div>
       </div>
 
-      {/* ── Mobile layout (Google Maps style) ── */}
+      {/* ══ MOBILE LAYOUT ══ */}
       <div className="lg:hidden">
         {/* Full-screen map */}
         <div className="fixed inset-0">
@@ -2033,153 +1676,93 @@ export default function RouteIntelligencePage() {
             watchZones={watchZonePoints}
             geofences={geofencePoints}
             showControlsUi={false}
-            routePath={displayed.routePath}
-            routeStops={displayed.routeStops}
-            trackedPosition={livePosition ? {
-              latitude: livePosition.latitude,
-              longitude: livePosition.longitude,
-              label: "Live position",
-            } : null}
+            routePath={selectedRoute?.routePath}
+            routeStops={selectedRoute?.routeStops}
+            trackedPosition={livePosition ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" } : null}
             followTrackedPosition={trackingEnabled}
-            showIncidents
-            showHeatmap
-            showRiskZones
-            showGeofencing={false}
+            showIncidents showHeatmap showRiskZones showGeofencing={false}
           />
         </div>
 
         {/* Mobile top bar */}
-        <div className="fixed left-0 right-0 top-0 z-30 flex items-center gap-3 px-4 py-3">
+        <div className="fixed left-0 right-0 top-0 z-30 flex items-center gap-2 px-3 py-3">
           <button
             onClick={() => setSidebarOpen(true)}
             aria-label="Open menu"
-            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.1] bg-[#060B16]/90 text-white/70 backdrop-blur-xl"
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-white/[0.1] bg-[#060B16]/90 text-white/60 backdrop-blur-xl"
           >
-            <HamburgerIcon />
+            <IconMenu />
           </button>
 
-          {/* Route pill */}
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-white/[0.08] bg-[#060B16]/90 px-3.5 py-2 backdrop-blur-xl">
-            <span className={`h-2 w-2 flex-shrink-0 rounded-full ${cfg.dot}`} />
-            <span className="truncate text-sm text-white/80">{displayed.routeLabel}</span>
-            {trackingEnabled ? (
-              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[9px] uppercase tracking-widest text-emerald-300">
-                {travelMode}
+          {/* Quick summary pill */}
+          {selectedRoute && (
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#060B16]/90 px-3 py-2 backdrop-blur-xl">
+              <span className={`h-2 w-2 flex-shrink-0 rounded-full ${RISK_CONFIG[selectedRoute.level].dot}`} />
+              <span className="min-w-0 flex-1 truncate text-sm text-white/75">
+                {origin.label} → {destination.label}
               </span>
-            ) : null}
-            <RiskBadge level={displayed.level} score={displayed.score} />
-          </div>
+              <span className="flex flex-shrink-0 items-center gap-1 text-xs text-white/50">
+                <IconClock />{formatDuration(selectedRoute.durationMin)}
+              </span>
+              <RiskPill level={selectedRoute.level} score={selectedRoute.score} compact />
+            </div>
+          )}
         </div>
 
         {/* Bottom sheet */}
         <div
-          className={`fixed bottom-0 left-0 right-0 z-30 flex flex-col rounded-t-3xl border-t border-white/[0.08] bg-[#060B16]/95 backdrop-blur-xl transition-all duration-300 ease-out ${
-            panelExpanded ? "h-[85vh]" : "h-[220px]"
+          className={`fixed bottom-0 left-0 right-0 z-30 flex flex-col rounded-t-3xl border-t border-white/[0.08] bg-[#060B16]/97 backdrop-blur-2xl transition-[height] duration-300 ease-out ${
+            sheetExpanded ? "h-[88vh]" : "h-[auto]"
           }`}
+          style={!sheetExpanded ? { maxHeight: "42vh" } : undefined}
         >
-          {/* Pull handle */}
+          {/* Drag handle + summary */}
           <button
-            onClick={() => setPanelExpanded((v) => !v)}
-            aria-label={panelExpanded ? "Collapse panel" : "Expand panel"}
-            className="flex w-full flex-col items-center gap-2 px-4 pt-3 pb-2"
+            onClick={() => setSheetExpanded((v) => !v)}
+            className="flex w-full flex-col items-center gap-2 px-4 pb-1 pt-3"
+            aria-label={sheetExpanded ? "Collapse" : "Expand"}
           >
             <div className="h-1 w-10 rounded-full bg-white/20" />
-            <div className="flex w-full items-center justify-between">
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-white/35">Route assessment</p>
-                <p className="mt-0.5 text-sm font-semibold text-white">{displayed.routeLabel}</p>
-              </div>
-              <ChevronUpIcon className={`text-white/40 transition-transform ${panelExpanded ? "" : "rotate-180"}`} />
-            </div>
           </button>
 
-          {/* Quick stats (always visible) */}
-          <div className="grid grid-cols-3 gap-2 px-4 pb-3">
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-2.5 text-center">
-              <p className="text-[10px] text-white/30">Distance</p>
-              <p className="mt-0.5 text-sm font-bold text-white">{displayed.distanceKm}km</p>
-            </div>
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-2.5 text-center">
-              <p className="text-[10px] text-white/30">Incidents</p>
-              <p className="mt-0.5 text-sm font-bold text-white">{displayed.incidents.length}</p>
-            </div>
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-2.5 text-center">
-              <p className="text-[10px] text-white/30">{trackingEnabled ? "Offset" : "Risk zones"}</p>
-              <p className="mt-0.5 text-sm font-bold text-white">
-                {trackingEnabled && liveRouteOffsetKm !== null ? `${liveRouteOffsetKm.toFixed(1)}km` : displayed.watchZones.length}
-              </p>
-            </div>
-          </div>
-
-          {/* Tabs + scrollable content (expanded only) */}
-          {panelExpanded && (
-            <>
-              <div className="flex border-b border-white/[0.06] px-4">
-                {TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setActiveTab(t.id)}
-                    className={`mr-4 pb-2.5 text-[11px] font-semibold uppercase tracking-widest transition ${
-                      activeTab === t.id
-                        ? "border-b-2 border-cyan-400 text-cyan-300"
-                        : "text-white/35"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
+          {/* Always-visible quick stats */}
+          {selectedRoute && (
+            <div className="shrink-0 px-4 pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/30">Best route</p>
+                  <p className="mt-0.5 text-sm font-bold text-white">{selectedRoute.label}</p>
+                </div>
+                <button
+                  onClick={() => setSheetExpanded((v) => !v)}
+                  className="flex items-center gap-1.5 rounded-full border border-white/[0.07] px-3 py-1.5 text-xs text-white/40"
+                >
+                  {sheetExpanded ? "Collapse" : "Details"}
+                  <IconChevronDown className={`transition-transform ${sheetExpanded ? "rotate-180" : ""}`} />
+                </button>
+              </div>
+              <div className="mt-2.5 grid grid-cols-4 gap-2">
+                {[
+                  { label: "ETA", value: formatDuration(selectedRoute.durationMin), icon: <IconClock /> },
+                  { label: "Distance", value: formatDistance(selectedRoute.distanceKm), icon: <IconRoute /> },
+                  { label: "Threats", value: String(selectedRoute.incidents.length), icon: <IconWarning /> },
+                  { label: "Risk", value: String(selectedRoute.score), icon: <IconShield /> },
+                ].map((stat) => (
+                  <div key={stat.label} className="flex flex-col items-center rounded-xl border border-white/[0.06] bg-white/[0.03] p-2">
+                    <span className="text-white/30">{stat.icon}</span>
+                    <p className="mt-1 text-sm font-bold text-white">{stat.value}</p>
+                    <p className="text-[9px] text-white/25">{stat.label}</p>
+                  </div>
                 ))}
               </div>
-              <div className="flex-1 overflow-y-auto pb-8">
-                <PanelContent
-                  tab={activeTab}
-                  assessment={primaryAssessment}
-                  altAssessment={altAssessment}
-                  originInput={originInput}
-                  destinationInput={destinationInput}
-                  originSuggestions={originSuggestions}
-                  destinationSuggestions={destinationSuggestions}
-                  departureHour={departureHour}
-                  previewAlt={previewAlt}
-                  loading={loading}
-                  travelMode={travelMode}
-                  trackingEnabled={trackingEnabled}
-                  livePosition={livePosition}
-                  useCurrentLocation={useCurrentLocation}
-                  onUseCurrentLocation={handleUseCurrentLocation}
-                  currentLocationStatus={currentLocationStatus}
-                  trackingError={effectiveTrackingError}
-                  liveAlerts={liveAlerts}
-                  heatmapEnabled={heatmapEnabled}
-                  onOriginInputChange={(value) => {
-                    setOriginInput(value);
-                    if (value.trim().length < 2) setOriginSuggestions([]);
-                  }}
-                  onDestinationInputChange={(value) => {
-                    setDestinationInput(value);
-                    if (value.trim().length < 2) setDestinationSuggestions([]);
-                  }}
-                  onSelectOriginSuggestion={handleSelectOriginSuggestion}
-                  onSelectDestinationSuggestion={handleSelectDestinationSuggestion}
-                  onHourChange={setDepartureHour}
-                  onSwap={() => {
-                    setOriginId(destinationId);
-                    setDestinationId(originId);
-                    setCustomOrigin(customDestination);
-                    setCustomDestination(customOrigin);
-                    setOriginInput(destination.label);
-                    setDestinationInput(origin.label);
-                    setOriginSuggestions([]);
-                    setDestinationSuggestions([]);
-                  }}
-                  onToggleAlt={() => setPreviewAlt((v) => !v)}
-                  onTravelModeChange={setTravelMode}
-                  onToggleTracking={() => {
-                    setTrackingError("");
-                    setTrackingEnabled((value) => !value);
-                  }}
-                />
-              </div>
-            </>
+            </div>
+          )}
+
+          {/* Expanded full panel */}
+          {sheetExpanded && (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <MainPanel {...panelProps} />
+            </div>
           )}
         </div>
       </div>

@@ -277,6 +277,23 @@ Can:
 - confirm, dispute, or add context to signals
 - increase corroboration without being security personnel
 
+Trust and reputation should be handled as a reliability system, not a harsh punishment system.
+
+Recommended rules:
+
+- accurate reports and useful confirmations increase trust
+- false or repeated abusive reports reduce trust gradually
+- low-trust users can still contribute, but their reports carry less weight and may require more corroboration
+- temporary cooldowns should be reserved for repeated abuse, not ordinary mistakes
+- avoid immediate permanent bans for a single incorrect report
+
+Example weighting:
+
+- `+5 trust` for confirmed report
+- `+2 trust` for useful verification
+- `-10 trust` for false report
+- `-20 trust` for repeated abuse
+
 ### Analyst / Operator
 
 Can:

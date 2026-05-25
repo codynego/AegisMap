@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 
 from apps.users.models import UserProfile, UserRole
+from apps.users.services import is_user_temporarily_restricted, penalize_false_report
 
 User = get_user_model()
 
@@ -139,3 +140,35 @@ class CurrentUserPreferenceTests(TestCase):
         self.assertEqual(self.profile.metadata["watched_areas"], ["Lagos", "Ogun"])
         self.assertEqual(self.profile.metadata["saved_routes"], ["Lekki - Epe", "Abuja Airport Road"])
         self.assertEqual(self.profile.metadata["minimum_alert_severity"], "high")
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class SourceTrustMechanicsTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="source_user",
+            email="source@example.com",
+            password="strongpass123",
+        )
+        self.profile = self.user.source_profiles.create(label="Source User")
+
+    def test_first_false_report_reduces_trust_without_restricting_reporting(self):
+        initial_score = self.profile.trust_score
+
+        penalize_false_report(self.profile, reason="dismissed_false_report")
+
+        self.profile.refresh_from_db()
+        self.assertLess(self.profile.trust_score, initial_score)
+        self.assertEqual(self.profile.metadata["false_report_status"], "trust_reduced")
+        self.assertNotIn("reporting_restricted_until", self.profile.metadata)
+        self.assertFalse(is_user_temporarily_restricted(self.user))
+
+    def test_repeated_false_reports_trigger_cooldown(self):
+        penalize_false_report(self.profile, reason="dismissed_false_report")
+        penalize_false_report(self.profile, reason="dismissed_false_report")
+        penalize_false_report(self.profile, reason="analyst_rejected_report")
+
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.metadata["false_report_status"], "cooldown")
+        self.assertIn("reporting_restricted_until", self.profile.metadata)
+        self.assertTrue(is_user_temporarily_restricted(self.user))

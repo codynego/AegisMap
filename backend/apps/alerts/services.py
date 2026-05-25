@@ -137,6 +137,57 @@ def generate_rule_based_alerts(signal: Signal) -> list[Alert]:
     return created_alerts
 
 
+def generate_verification_alert(signal: Signal, radius_meters: int = 2000) -> Alert | None:
+    """Create an alert that requests nearby users to verify a freshly submitted signal.
+
+    The alert is targeted by a simple radius in meters so downstream delivery
+    systems can surface it to users who are nearby.
+    """
+    if signal.latitude is None or signal.longitude is None:
+        return None
+
+    title = f"Verify report near {signal.location_name or 'reported location'}"
+    # Avoid spamming repeated verification alerts for the same signal
+    if _alert_exists(title=title, geofence=None, rule=None, signal=signal, minutes=60):
+        return None
+
+    location = resolve_nigeria_state(signal.latitude, signal.longitude)
+    alert = Alert.objects.create(
+        cluster=signal.cluster,
+        severity=signal.severity,
+        title=title,
+        message=(
+            f"A new report was submitted near {signal.location_name or 'this area'}. "
+            f"Please review and submit a verification."
+        ),
+        metadata={
+            "signal_id": str(signal.pk),
+            "signal_confidence": signal.confidence,
+            "signal_category": signal.category,
+            "issued_by": "system",
+            "purpose": "verification",
+            "targeting": {
+                "location_radius_meters": radius_meters,
+                "watched_areas": [location["state"]] if location.get("state") else [],
+                "saved_routes": [signal.route_hint] if signal.route_hint else [],
+            },
+            **alert_location_payload(
+                label=signal.location_name,
+                latitude=signal.latitude,
+                longitude=signal.longitude,
+                state=location["state"],
+            ),
+        },
+    )
+    record_audit_event(
+        "alert.issued",
+        obj=alert,
+        description="Verification alert issued for new signal.",
+        metadata={"issued_by": "system", "signal_id": str(signal.pk)},
+    )
+    return alert
+
+
 def _count_rule_matching_signals(signal: Signal, rule: AlertRule) -> int:
     threshold_time = timezone.now() - timedelta(minutes=rule.window_minutes)
     queryset = Signal.objects.filter(

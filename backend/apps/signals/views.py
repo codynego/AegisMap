@@ -24,6 +24,7 @@ from .serializers import (
     SignalVerificationSubmitSerializer,
 )
 from .services import assess_signal, dispatch_signal_pipeline, submit_signal_verification
+from apps.alerts.services import generate_verification_alert
 from apps.incidents.models import Incident
 
 
@@ -134,6 +135,19 @@ class SignalViewSet(viewsets.ModelViewSet):
                 request=self.request,
                 description=f"Failed to auto-create incident for signal {signal.id}",
             )
+        # Issue a verification alert to nearby users so they can corroborate the report
+        try:
+            generate_verification_alert(signal)
+        except Exception:
+            # don't block signal creation if alert generation fails; record via audit
+            record_audit_event(
+                "alert.verification.create.failed",
+                actor=submitted_by,
+                obj=signal,
+                request=self.request,
+                description=f"Failed to create verification alert for signal {signal.id}",
+            )
+
         record_audit_event(
             "signal.created",
             actor=submitted_by,
