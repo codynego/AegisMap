@@ -864,6 +864,8 @@ function MainPanel({
   destinationInput,
   originSuggestions,
   destinationSuggestions,
+  originSearching,
+  destinationSearching,
   departureHour,
   travelMode,
   onOriginChange,
@@ -895,6 +897,8 @@ function MainPanel({
   destinationInput: string;
   originSuggestions: RouteHubSuggestion[];
   destinationSuggestions: RouteHubSuggestion[];
+  originSearching: boolean;
+  destinationSearching: boolean;
   departureHour: number;
   travelMode: TravelMode;
   onOriginChange: (v: string) => void;
@@ -934,6 +938,7 @@ function MainPanel({
               label="From"
               value={originInput}
               suggestions={originSuggestions}
+              isSearching={originSearching}
               onChange={onOriginChange}
               onSelect={onSelectOriginSugg}
               onClear={onClearOrigin}
@@ -944,6 +949,7 @@ function MainPanel({
               label="To"
               value={destinationInput}
               suggestions={destinationSuggestions}
+              isSearching={destinationSearching}
               onChange={onDestinationChange}
               onSelect={onSelectDestinationSugg}
               onClear={onClearDestination}
@@ -1247,6 +1253,8 @@ export default function RouteIntelligencePage() {
   const [destinationSuggestions, setDestinationSuggestions] = useState<RouteHubSuggestion[]>([]);
   const [originSearching, setOriginSearching] = useState(false);
   const [destinationSearching, setDestinationSearching] = useState(false);
+  const [originSearchTick, setOriginSearchTick] = useState(0);
+  const [destinationSearchTick, setDestinationSearchTick] = useState(0);
   const [departureHour, setDepartureHour] = useState(new Date().getHours());
   const [selectedRouteId, setSelectedRouteId] = useState("direct");
   const [travelMode, setTravelMode] = useState<TravelMode>("drive");
@@ -1418,6 +1426,8 @@ export default function RouteIntelligencePage() {
     if (originInput.trim().length < 2) { setOriginSuggestions([]); setOriginSearching(false); return; }
     let active = true;
     setOriginSearching(true);
+    const tick = Date.now();
+    setOriginSearchTick(tick);
     const tid = window.setTimeout(async () => {
       try {
         const [remote, states, cities] = await Promise.all([
@@ -1436,7 +1446,19 @@ export default function RouteIntelligencePage() {
         ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
         setOriginSuggestions(merged.slice(0, 8));
       } catch { if (active) setOriginSuggestions([]); }
-      finally { if (active) setOriginSearching(false); }
+      finally {
+        if (active) {
+          const elapsed = Date.now() - tick;
+          const minVisibleMs = 350;
+          if (elapsed < minVisibleMs) {
+            window.setTimeout(() => {
+              if (active) setOriginSearching(false);
+            }, minVisibleMs - elapsed);
+          } else {
+            setOriginSearching(false);
+          }
+        }
+      }
     }, 220);
     return () => { active = false; setOriginSearching(false); window.clearTimeout(tid); };
   }, [originInput, origin.state]);
@@ -1446,6 +1468,8 @@ export default function RouteIntelligencePage() {
     if (destinationInput.trim().length < 2) { setDestinationSuggestions([]); setDestinationSearching(false); return; }
     let active = true;
     setDestinationSearching(true);
+    const tick = Date.now();
+    setDestinationSearchTick(tick);
     const tid = window.setTimeout(async () => {
       try {
         const [remote, states, cities] = await Promise.all([
@@ -1464,7 +1488,19 @@ export default function RouteIntelligencePage() {
         ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
         setDestinationSuggestions(merged.slice(0, 8));
       } catch { if (active) setDestinationSuggestions([]); }
-      finally { if (active) setDestinationSearching(false); }
+      finally {
+        if (active) {
+          const elapsed = Date.now() - tick;
+          const minVisibleMs = 350;
+          if (elapsed < minVisibleMs) {
+            window.setTimeout(() => {
+              if (active) setDestinationSearching(false);
+            }, minVisibleMs - elapsed);
+          } else {
+            setDestinationSearching(false);
+          }
+        }
+      }
     }, 220);
     return () => { active = false; setDestinationSearching(false); window.clearTimeout(tid); };
   }, [destinationInput, destination.state]);
@@ -1594,6 +1630,7 @@ export default function RouteIntelligencePage() {
     activeTab,
     onTabChange: setActiveTab,
     originInput, destinationInput, originSuggestions, destinationSuggestions,
+    originSearching, destinationSearching,
     departureHour, travelMode,
     onOriginChange: (v: string) => setOriginInput(v),
     onDestinationChange: (v: string) => setDestinationInput(v),

@@ -9,7 +9,7 @@ export type LocationSearchResult = {
 };
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
-const MAPBOX_SEARCH_TYPES = "address,street,block,secondary_address,place,locality,neighborhood,postcode,district";
+const MAPBOX_SEARCH_TYPES = "address,place,district,locality,postcode,neighborhood";
 
 export const NIGERIA_STATE_NAMES = [
   "Abia",
@@ -208,15 +208,10 @@ async function fetchNominatimLocations(
     try {
       const searchParams = new URLSearchParams({
         q: variant,
-        format: "jsonv2",
-        addressdetails: "1",
         limit: String(limit),
-        countrycodes: "ng",
-        dedupe: "1",
-        namedetails: "1",
-        "accept-language": "en",
+        state: options?.state ?? "",
       });
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?${searchParams.toString()}`);
+      const response = await fetch(`/api/nominatim-search?${searchParams.toString()}`);
       if (!response.ok) continue;
       const payload = await response.json();
       if (!Array.isArray(payload)) continue;
@@ -252,6 +247,21 @@ async function fetchNominatimLocations(
       state: detectedState || options?.state || "Nigeria",
     } satisfies LocationSearchResult];
   });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeoutId = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function mapboxFeatureState(feature: MapboxFeature) {
@@ -316,7 +326,7 @@ async function fetchLocationFeaturesWithFallback(
   const candidates = [
     { proximity, types: MAPBOX_SEARCH_TYPES },
     { types: MAPBOX_SEARCH_TYPES },
-    { types: "address,street,block,secondary_address,place,locality,neighborhood,postcode" },
+    { types: "address,place,district,locality,postcode,neighborhood" },
   ];
 
   for (const candidate of candidates) {
@@ -371,9 +381,13 @@ export async function searchLocations(
   const localResults = [...localStateResults, ...localCityResults, ...localTownResults]
     .filter((item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index);
 
-  const nominatimResults = await fetchNominatimLocations(normalizedQuery, Math.max(limit * 2, 10), options);
-
   if (!MAPBOX_TOKEN) {
+    const nominatimResults = await withTimeout(
+      fetchNominatimLocations(normalizedQuery, Math.max(limit * 2, 10), options),
+      1200,
+      [],
+    );
+
     return [...localResults, ...nominatimResults]
       .filter((item, index, self) => self.findIndex((candidate) => candidate.label === item.label && candidate.state === item.state) === index)
       .slice(0, limit);
@@ -390,6 +404,12 @@ export async function searchLocations(
     const nextFeatures = await fetchLocationFeaturesWithFallback(variant, Math.max(limit * 2, 10), stateCenter);
     features.push(...nextFeatures);
   }
+
+  const nominatimResults = await withTimeout(
+    fetchNominatimLocations(normalizedQuery, Math.max(limit * 2, 10), options),
+    1200,
+    [],
+  );
 
   const seen = new Set<string>();
   const mapped = features.flatMap((feature, index) => {

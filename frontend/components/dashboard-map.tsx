@@ -1704,27 +1704,36 @@ function ControlsContent({
               <datalist id="gp-address-list">
                 {addressOptions.map((o) => <option key={o.id} value={o.label} />)}
               </datalist>
-              {isAddressSuggestionOpen && (isLoadingAddressOptions || addressOptions.length > 0) ? (
-                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#08101f] shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
-                  {isLoadingAddressOptions ? (
-                    <div className="px-3 py-3 text-xs text-white/45">Finding locations...</div>
-                  ) : (
-                    addressOptions.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => onPickAddress(option)}
-                        className="flex w-full flex-col items-start gap-1 border-b border-white/[0.06] px-3 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04]"
-                      >
-                        <span className="text-sm font-medium text-white">{option.label}</span>
-                        <span className="text-xs text-white/40">
-                          {option.state ? `${option.state} • Suggested location` : "Suggested location"}
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
+              {isAddressSuggestionOpen ? (
+                isLoadingAddressOptions || addressOptions.length > 0 || addressQuery.trim().length >= 2 ? (
+                  <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#08101f] shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
+                    {isLoadingAddressOptions ? (
+                      <div className="flex items-center gap-2 px-3 py-3 text-xs text-white/45">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
+                        Searching locations…
+                      </div>
+                    ) : addressOptions.length > 0 ? (
+                      addressOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => onPickAddress(option)}
+                          className="flex w-full flex-col items-start gap-1 border-b border-white/[0.06] px-3 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04]"
+                        >
+                          <span className="text-sm font-medium text-white">{option.label}</span>
+                          <span className="text-xs text-white/40">
+                            {option.state ? `${option.state} • Suggested location` : "Suggested location"}
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-3 text-xs text-white/45">
+                        No matches found. Try a town, street, or full address.
+                      </div>
+                    )}
+                  </div>
+                ) : null
               ) : null}
               </div>
             </label>
