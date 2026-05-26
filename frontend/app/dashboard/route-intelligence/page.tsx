@@ -82,7 +82,7 @@ type TravelMode = "drive" | "walk" | "transit";
 
 type RouteOption = {
   id: string;
-  label: string; // e.g. "Via Lokoja", "Via Ibadan"
+  label: string;
   score: number;
   level: RiskLevel;
   distanceKm: number;
@@ -118,14 +118,12 @@ type LiveAlert = {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
 
-// Average speeds by mode (km/h)
 const AVG_SPEED: Record<TravelMode, number> = {
   drive: 65,
   walk: 5,
   transit: 35,
 };
 
-// Urban speed factor (slower in cities)
 const URBAN_FACTOR = 0.72;
 
 const ROUTE_HUBS: RouteHub[] = [
@@ -241,10 +239,10 @@ function estimateDuration(distanceKm: number, mode: TravelMode, hour: number): n
   let effectiveSpeed = base;
   if (isUrban) effectiveSpeed *= URBAN_FACTOR;
   if (isRushHour && mode === "drive") effectiveSpeed *= 0.65;
-  if (isNight && mode === "drive") effectiveSpeed *= 1.15; // faster at night, less traffic
+  if (isNight && mode === "drive") effectiveSpeed *= 1.15;
   if (mode === "transit") {
-    const stops = Math.ceil(distanceKm / 8); // approx stop every 8km
-    return (distanceKm / effectiveSpeed) * 60 + stops * 2; // 2min per stop
+    const stops = Math.ceil(distanceKm / 8);
+    return (distanceKm / effectiveSpeed) * 60 + stops * 2;
   }
   return (distanceKm / effectiveSpeed) * 60;
 }
@@ -275,29 +273,6 @@ function ptToPathKm(lat: number, lng: number, path: Array<[number, number]>): nu
     min = Math.min(min, ptToSegKm(lat, lng, aLat, aLng, bLat, bLng));
   }
   return min;
-}
-
-function projectToPathKm(lat: number, lng: number, path: Array<[number, number]>) {
-  if (path.length < 2) return { offsetKm: Infinity, alongKm: 0, totalKm: 0 };
-  let minOffsetKm = Infinity, closestAlongKm = 0, traversedKm = 0;
-  for (let i = 0; i < path.length - 1; i++) {
-    const [aLng, aLat] = path[i];
-    const [bLng, bLat] = path[i + 1];
-    const mLat = (((lat + aLat + bLat) / 3) * Math.PI) / 180;
-    const kLat = 111.32, kLng = 111.32 * Math.cos(mLat);
-    const px = lng * kLng, py = lat * kLat;
-    const ax = aLng * kLng, ay = aLat * kLat;
-    const bx = bLng * kLng, by = bLat * kLat;
-    const abx = bx - ax, aby = by - ay;
-    const segmentLengthKm = Math.hypot(abx, aby);
-    const ls = abx ** 2 + aby ** 2;
-    const t = ls === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / ls));
-    const projX = ax + abx * t, projY = ay + aby * t;
-    const offsetKm = Math.hypot(px - projX, py - projY);
-    if (offsetKm < minOffsetKm) { minOffsetKm = offsetKm; closestAlongKm = traversedKm + segmentLengthKm * t; }
-    traversedKm += segmentLengthKm;
-  }
-  return { offsetKm: minOffsetKm, alongKm: closestAlongKm, totalKm: traversedKm };
 }
 
 function pathLengthKm(path: Array<[number, number]>): number {
@@ -386,7 +361,13 @@ function buildRouteHubs(watchZoneRecords: WatchZoneRecord[], geofenceRecords: Ge
 
 const CURRENT_LOCATION_HUB_ID = "__current_location__";
 function makeCurrentLocationHub(pos: LivePosition): RouteHub {
-  return { id: CURRENT_LOCATION_HUB_ID, label: "My location", state: deriveHubState(pos.latitude, pos.longitude), latitude: pos.latitude, longitude: pos.longitude };
+  return {
+    id: CURRENT_LOCATION_HUB_ID,
+    label: "My location",
+    state: deriveHubState(pos.latitude, pos.longitude),
+    latitude: pos.latitude,
+    longitude: pos.longitude,
+  };
 }
 
 function makeRouteHubFromSuggestion(s: RouteHubSuggestion, kind: "origin" | "destination"): RouteHub {
@@ -603,6 +584,15 @@ function IconX() {
   );
 }
 
+function IconRefresh() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <polyline points="23 4 23 10 17 10"/>
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function RiskPill({ level, score, compact }: { level: RiskLevel; score: number; compact?: boolean }) {
@@ -668,7 +658,6 @@ function RouteCard({
         <RiskPill level={route.level} score={route.score} compact />
       </div>
 
-      {/* Route mini-map progress bar */}
       <div className="mt-3">
         <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div
@@ -851,6 +840,21 @@ function pushLiveAlert(setAlerts: Dispatch<SetStateAction<LiveAlert[]>>, next: L
   setAlerts((cur) => [next, ...cur.filter((a) => a.id !== next.id)].slice(0, 6));
 }
 
+// ─── Stable Map Bounds Helper ─────────────────────────────────────────────────
+// Computes a bounding box center + zoom hint from a route path so the map
+// can fit the full route without re-centering on every minor state change.
+function routeBoundsCenter(path: Array<[number, number]>): { latitude: number; longitude: number } | null {
+  if (path.length === 0) return null;
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const [lng, lat] of path) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  }
+  return { latitude: (minLat + maxLat) / 2, longitude: (minLng + maxLng) / 2 };
+}
+
 // ─── Main Panel ───────────────────────────────────────────────────────────────
 
 type PanelTab = "routes" | "threats" | "live";
@@ -861,7 +865,6 @@ function MainPanel({
   onSelectRoute,
   activeTab,
   onTabChange,
-  // planner inputs
   originInput,
   destinationInput,
   originSuggestions,
@@ -879,7 +882,6 @@ function MainPanel({
   onHourChange,
   onSwap,
   onTravelModeChange,
-  // live tracking
   trackingEnabled,
   livePosition,
   useCurrentLocation,
@@ -890,6 +892,7 @@ function MainPanel({
   selectedRouteAdvisories,
   onToggleTracking,
   loading,
+  onFitRoute,
 }: {
   routes: RouteOption[];
   selectedRouteId: string;
@@ -923,6 +926,8 @@ function MainPanel({
   selectedRouteAdvisories: string[];
   onToggleTracking: () => void;
   loading: boolean;
+  /** Called to snap the map viewport to the currently selected route */
+  onFitRoute: () => void;
 }) {
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) ?? routes[0];
   const totalIncidents = selectedRoute?.incidents.length ?? 0;
@@ -964,7 +969,7 @@ function MainPanel({
           <button
             onClick={onSwap}
             className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-white/40 transition hover:border-cyan-400/30 hover:text-cyan-300"
-            aria-label="Swap"
+            aria-label="Swap origin and destination"
           >
             <IconSwap />
           </button>
@@ -1018,7 +1023,9 @@ function MainPanel({
                   <IconClock /> Departure
                 </p>
                 <span className={`rounded-full border px-2.5 py-0.5 text-xs font-bold ${
-                  (departureHour >= 20 || departureHour < 6) ? "border-amber-500/20 bg-amber-500/8 text-amber-300" : "border-emerald-500/20 bg-emerald-500/8 text-emerald-300"
+                  (departureHour >= 20 || departureHour < 6)
+                    ? "border-amber-500/20 bg-amber-500/8 text-amber-300"
+                    : "border-emerald-500/20 bg-emerald-500/8 text-emerald-300"
                 }`}>
                   {departureHour.toString().padStart(2, "0")}:00 {departureHour >= 20 || departureHour < 6 ? "🌙 Night" : "☀️ Day"}
                 </span>
@@ -1033,11 +1040,22 @@ function MainPanel({
               </div>
             </div>
 
-            {/* Route options — Google Maps style */}
+            {/* Route options */}
             <div>
-              <p className="mb-2 text-[10px] uppercase tracking-widest text-white/30">
-                {routes.length} route{routes.length !== 1 ? "s" : ""} found
-              </p>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] uppercase tracking-widest text-white/30">
+                  {routes.length} route{routes.length !== 1 ? "s" : ""} found
+                </p>
+                {/* FIT ROUTE button — snaps map to show full selected route */}
+                <button
+                  onClick={onFitRoute}
+                  className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.03] px-2.5 py-1.5 text-[10px] uppercase tracking-widest text-white/40 transition hover:border-cyan-400/20 hover:text-cyan-300"
+                  title="Fit route on map"
+                >
+                  <IconRoute />
+                  Fit map
+                </button>
+              </div>
               <div className="space-y-2">
                 {routes.map((route) => (
                   <RouteCard
@@ -1055,7 +1073,9 @@ function MainPanel({
               <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
                 <p className="mb-3 text-[10px] uppercase tracking-widest text-white/30">Route details</p>
                 <ScoreMeter score={selectedRoute.score} level={selectedRoute.level} />
-                {selectedRouteAdvisories.some((advisory) => /weather|rain|visibility|flood|storm/i.test(advisory)) && (
+                {selectedRouteAdvisories.some((advisory) =>
+                  /weather|rain|visibility|flood|storm/i.test(advisory)
+                ) && (
                   <div className="mt-3 rounded-xl border border-cyan-500/15 bg-cyan-500/5 p-3">
                     <p className="text-[10px] uppercase tracking-widest text-cyan-400/70">Weather-aware route warnings</p>
                     <p className="mt-1 text-xs leading-5 text-white/55">
@@ -1126,7 +1146,9 @@ function MainPanel({
                     );
                   })}
                   {selectedRoute.incidents.length > 6 && (
-                    <p className="text-center text-[11px] text-white/25">+{selectedRoute.incidents.length - 6} more</p>
+                    <p className="text-center text-[11px] text-white/25">
+                      +{selectedRoute.incidents.length - 6} more
+                    </p>
                   )}
                 </div>
               )}
@@ -1159,7 +1181,12 @@ function MainPanel({
                 </div>
               )}
             </div>
-            {loading && <p className="text-center text-[11px] text-white/25">Refreshing intelligence…</p>}
+            {loading && (
+              <p className="flex items-center justify-center gap-2 text-[11px] text-white/25">
+                <IconRefresh />
+                Refreshing intelligence…
+              </p>
+            )}
           </div>
         )}
 
@@ -1265,11 +1292,19 @@ export default function RouteIntelligencePage() {
   const [destinationSuggestions, setDestinationSuggestions] = useState<RouteHubSuggestion[]>([]);
   const [originSearching, setOriginSearching] = useState(false);
   const [destinationSearching, setDestinationSearching] = useState(false);
-  const [originSearchTick, setOriginSearchTick] = useState(0);
-  const [destinationSearchTick, setDestinationSearchTick] = useState(0);
   const [departureHour, setDepartureHour] = useState(new Date().getHours());
+
+  // FIX: Track the selected route ID *and* keep a stable "last valid" route
+  // so the map never receives undefined routePath between renders.
   const [selectedRouteId, setSelectedRouteId] = useState("direct");
+  const [stableRoute, setStableRoute] = useState<RouteOption | null>(null);
+
   const [travelMode, setTravelMode] = useState<TravelMode>("drive");
+
+  // FIX: Map fit-route trigger — incrementing this tells the map to re-fit
+  // the current route bounds without resetting on every re-render.
+  const [fitRouteTrigger, setFitRouteTrigger] = useState(0);
+  const triggerFitRoute = useCallback(() => setFitRouteTrigger((n) => n + 1), []);
 
   // Live tracking
   const [trackingEnabled, setTrackingEnabled] = useState(false);
@@ -1281,12 +1316,15 @@ export default function RouteIntelligencePage() {
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
   const watchIdRef = useRef<number | null>(null);
   const activeZoneKeysRef = useRef<Set<string>>(new Set());
-  const activeGeofenceKeysRef = useRef<Set<string>>(new Set());
   const recentIncidentAlertRef = useRef<Record<number, number>>({});
-  const recentRouteAlertRef = useRef<Record<string, number>>({});
   const incidentSnapshotRef = useRef<Record<number, string>>({});
   const incidentFeedPrimedRef = useRef(false);
-  const liveContextRef = useRef({ corridorKm: 0, routePath: [] as Array<[number, number]>, travelMode: "drive" as TravelMode, livePosition: null as LivePosition | null });
+  const liveContextRef = useRef({
+    corridorKm: 0,
+    routePath: [] as Array<[number, number]>,
+    travelMode: "drive" as TravelMode,
+    livePosition: null as LivePosition | null,
+  });
 
   // Data
   const [authToken] = useState<string | null>(() =>
@@ -1360,9 +1398,8 @@ export default function RouteIntelligencePage() {
         if (wRes.ok) setWatchZones(getList(wData));
         if (gRes.ok) {
           const allGeofences = getList(gData) as GeofenceRecord[];
-          const userGeofences = (allGeofences || []).filter((g) => {
+          const userGeofences = allGeofences.filter((g) => {
             const md = g.metadata ?? {};
-            if (!md) return true;
             if (md.import_dataset) return false;
             if (md.imported) return false;
             if (md.demo) return false;
@@ -1376,9 +1413,12 @@ export default function RouteIntelligencePage() {
             getList(aData as ApiListResponse<Record<string, unknown>>).map((a, i) => {
               const sev = String(a.severity ?? "info").toLowerCase();
               return {
-                id: Number(a.id ?? i + 1), level: sev === "critical" ? "Critical" : sev === "high" ? "Warning" : "Info",
-                triggeredAt: String(a.triggered_at ?? ""), title: String(a.title ?? "Alert"),
-                body: String(a.message ?? ""), meta: String(a.status ?? "ACTIVE").toUpperCase(),
+                id: Number(a.id ?? i + 1),
+                level: sev === "critical" ? "Critical" : sev === "high" ? "Warning" : "Info",
+                triggeredAt: String(a.triggered_at ?? ""),
+                title: String(a.title ?? "Alert"),
+                body: String(a.message ?? ""),
+                meta: String(a.status ?? "ACTIVE").toUpperCase(),
               };
             }),
           );
@@ -1397,7 +1437,16 @@ export default function RouteIntelligencePage() {
     () => incidents.flatMap((inc) => {
       const lat = toNumber(inc.latitude), lng = toNumber(inc.longitude);
       if (lat === null || lng === null) return [];
-      return [{ id: inc.id, title: inc.title, incidentType: normalizeReportType(inc.incident_type), severity: inc.severity, confidence: inc.confidence, status: inc.status, summary: inc.summary, detectedAt: inc.detected_at || inc.created_at, latitude: lat, longitude: lng, locationName: inc.location_name, visibilityScore: typeof inc.visibility_score === "number" ? inc.visibility_score : undefined }];
+      return [{
+        id: inc.id, title: inc.title,
+        incidentType: normalizeReportType(inc.incident_type),
+        severity: inc.severity, confidence: inc.confidence,
+        status: inc.status, summary: inc.summary,
+        detectedAt: inc.detected_at || inc.created_at,
+        latitude: lat, longitude: lng,
+        locationName: inc.location_name,
+        visibilityScore: typeof inc.visibility_score === "number" ? inc.visibility_score : undefined,
+      }];
     }),
     [incidents],
   );
@@ -1406,7 +1455,11 @@ export default function RouteIntelligencePage() {
     () => watchZones.flatMap((z) => {
       const lat = toNumber(z.centroid_latitude), lng = toNumber(z.centroid_longitude);
       if (lat === null || lng === null) return [];
-      return [{ id: z.id, name: z.name, riskLevel: z.current_risk_level, riskScore: toNumber(z.current_risk_score) ?? 0, latitude: lat, longitude: lng }];
+      return [{
+        id: z.id, name: z.name, riskLevel: z.current_risk_level,
+        riskScore: toNumber(z.current_risk_score) ?? 0,
+        latitude: lat, longitude: lng,
+      }];
     }),
     [watchZones],
   );
@@ -1415,52 +1468,91 @@ export default function RouteIntelligencePage() {
     () => geofences.flatMap((g) => {
       const lat = toNumber(g.centroid_latitude), lng = toNumber(g.centroid_longitude);
       if (lat === null || lng === null) return [];
-      return [{ id: g.id, name: g.name, geofenceType: g.geofence_type, status: g.status, description: g.description, radiusMeters: toNumber(g.radius_meters) ?? 0, latitude: lat, longitude: lng }];
+      return [{
+        id: g.id, name: g.name, geofenceType: g.geofence_type,
+        status: g.status, description: g.description,
+        radiusMeters: toNumber(g.radius_meters) ?? 0,
+        latitude: lat, longitude: lng,
+      }];
     }),
     [geofences],
   );
 
-  const weatherOverlayPoints = useMemo(
-    () => weatherIntel?.overlay ?? [],
-    [weatherIntel],
-  );
+  const weatherOverlayPoints = useMemo(() => weatherIntel?.overlay ?? [], [weatherIntel]);
 
+  // FIX: Memoize weather-adjusted zones with stable identity when no adjustments exist
   const weatherAdjustedWatchZonePoints = useMemo(() => {
-    const adjustmentMap = new Map(
-      (weatherIntel?.riskZoneAdjustments ?? []).map((item) => [item.watchZoneId, item]),
-    );
+    const adjustments = weatherIntel?.riskZoneAdjustments;
+    if (!adjustments || adjustments.length === 0) return watchZonePoints;
+    const adjustmentMap = new Map(adjustments.map((item) => [item.watchZoneId, item]));
     return watchZonePoints.map((zone) => {
-      const adjustment = adjustmentMap.get(String(zone.id));
-      if (!adjustment) return zone;
+      const adj = adjustmentMap.get(String(zone.id));
+      if (!adj) return zone;
       return {
         ...zone,
-        riskLevel: adjustment.weatherAdjustedRiskLevel,
-        riskScore: adjustment.weatherAdjustedRiskScore,
+        riskLevel: adj.weatherAdjustedRiskLevel,
+        riskScore: adj.weatherAdjustedRiskScore,
       };
     });
-  }, [watchZonePoints, weatherIntel]);
+  }, [watchZonePoints, weatherIntel?.riskZoneAdjustments]);
 
   const routeHubs = useMemo(() => buildRouteHubs(watchZones, geofences), [watchZones, geofences]);
+
   const currentOriginHub = useMemo(
     () => (useCurrentLocation && originLocation ? makeCurrentLocationHub(originLocation) : null),
     [originLocation, useCurrentLocation],
   );
+
   const origin = currentOriginHub ?? customOrigin ?? routeHubs.find((h) => h.id === originId) ?? routeHubs[0];
   const destination = customDestination ?? routeHubs.find((h) => h.id === destinationId) ?? routeHubs[1];
 
   const allRoutes = useMemo(
-    () => buildAllRouteOptions(origin, destination, departureHour, travelMode, incidentPoints, weatherAdjustedWatchZonePoints, routeHubs),
+    () => buildAllRouteOptions(
+      origin, destination, departureHour, travelMode,
+      incidentPoints, weatherAdjustedWatchZonePoints, routeHubs,
+    ),
     [origin, destination, departureHour, travelMode, incidentPoints, weatherAdjustedWatchZonePoints, routeHubs],
   );
 
-  // Auto-select best route when routes change
-  useEffect(() => {
+  // FIX: When routes rebuild (origin/dest change), synchronously compute the
+  // best route ID *before* the render so we never have a frame where
+  // selectedRouteId points to a non-existent route.
+  const bestRouteId = useMemo(() => {
     const best = allRoutes.find((r) => r.isBest);
-    if (best) setSelectedRouteId(best.id);
+    return best?.id ?? allRoutes[0]?.id ?? "direct";
   }, [allRoutes]);
 
-  const selectedRoute = allRoutes.find((r) => r.id === selectedRouteId) ?? allRoutes[0];
+  // FIX: Keep selectedRouteId valid — if the current ID is gone after a
+  // rebuild, snap to best immediately without a separate useEffect.
+  const resolvedSelectedRouteId = useMemo(() => {
+    const exists = allRoutes.some((r) => r.id === selectedRouteId);
+    return exists ? selectedRouteId : bestRouteId;
+  }, [allRoutes, selectedRouteId, bestRouteId]);
 
+  // FIX: Sync resolved ID back to state only when it actually differs, so we
+  // don't cause unnecessary re-renders.
+  useEffect(() => {
+    if (resolvedSelectedRouteId !== selectedRouteId) {
+      setSelectedRouteId(resolvedSelectedRouteId);
+    }
+  }, [resolvedSelectedRouteId, selectedRouteId]);
+
+  const selectedRoute = allRoutes.find((r) => r.id === resolvedSelectedRouteId) ?? allRoutes[0] ?? null;
+
+  // FIX: Maintain a stable "last valid route" reference so the map never
+  // receives an undefined routePath while routes are transitioning.
+  useEffect(() => {
+    if (selectedRoute) {
+      setStableRoute(selectedRoute);
+    }
+  }, [selectedRoute]);
+
+  // When origin or destination changes, auto-fit the map to show the new route
+  useEffect(() => {
+    triggerFitRoute();
+  }, [origin.id, destination.id, triggerFitRoute]);
+
+  // Weather intelligence — only runs when selectedRoute stabilises
   useEffect(() => {
     if (!authToken || !selectedRoute) {
       setWeatherIntel(null);
@@ -1477,7 +1569,7 @@ export default function RouteIntelligencePage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            points: selectedRoute.incidents.slice(0, 24).map((incident) => ({
+            points: selectedRoute!.incidents.slice(0, 24).map((incident) => ({
               id: `incident-${incident.id}`,
               latitude: incident.latitude,
               longitude: incident.longitude,
@@ -1496,7 +1588,7 @@ export default function RouteIntelligencePage() {
               risk_level: zone.riskLevel,
               risk_score: zone.riskScore,
             })),
-            route_path: selectedRoute.routePath,
+            route_path: selectedRoute!.routePath,
           }),
         });
         if (!response.ok || !active) return;
@@ -1509,14 +1601,21 @@ export default function RouteIntelligencePage() {
     }
 
     void loadWeather();
-    return () => {
-      active = false;
-    };
-  }, [authToken, selectedRoute, weatherAdjustedWatchZonePoints]);
+    return () => { active = false; };
+    // Intentionally exclude weatherAdjustedWatchZonePoints to avoid circular update;
+    // weather intel drives zone adjustments, not the other way around here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authToken, selectedRoute?.id]);
 
+  // Keep live context ref fresh
   useEffect(() => {
     if (!selectedRoute) return;
-    liveContextRef.current = { corridorKm: selectedRoute.corridorKm, routePath: selectedRoute.routePath, travelMode, livePosition };
+    liveContextRef.current = {
+      corridorKm: selectedRoute.corridorKm,
+      routePath: selectedRoute.routePath,
+      travelMode,
+      livePosition,
+    };
   }, [selectedRoute, livePosition, travelMode]);
 
   const selectedRouteWeatherAdvisories = useMemo(
@@ -1540,41 +1639,47 @@ export default function RouteIntelligencePage() {
 
   // Suggestion search – origin
   useEffect(() => {
-    if (originInput.trim().length < 2) { setOriginSuggestions([]); setOriginSearching(false); return; }
+    if (originInput.trim().length < 2) {
+      setOriginSuggestions([]);
+      setOriginSearching(false);
+      return;
+    }
     let active = true;
     setOriginSearching(true);
-    const tick = Date.now();
-    setOriginSearchTick(tick);
     const tid = window.setTimeout(async () => {
       try {
         const [remote, states, cities] = await Promise.all([
           searchLocations(originInput, 5, { state: origin.state }),
-          Promise.resolve(searchStateSuggestions(originInput, 3).map((s) => ({ ...s, kind: "state" as const }))),
-          Promise.resolve(searchAreaHubs(originInput, 6).map((h) => ({
-            id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`, label: h.label, state: h.state,
-            latitude: h.latitude, longitude: h.longitude, description: `${h.label}, ${h.state}`, kind: "city" as const,
-          }))),
+          Promise.resolve(
+            searchStateSuggestions(originInput, 3).map((s) => ({ ...s, kind: "state" as const }))
+          ),
+          Promise.resolve(
+            searchAreaHubs(originInput, 6).map((h) => ({
+              id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`,
+              label: h.label, state: h.state,
+              latitude: h.latitude, longitude: h.longitude,
+              description: `${h.label}, ${h.state}`,
+              kind: "city" as const,
+            }))
+          ),
         ]);
         if (!active) return;
         const merged = [
           ...states,
           ...cities,
-          ...remote.map((r) => ({ id: `r-${r.id}`, label: r.label, state: r.state, latitude: r.latitude, longitude: r.longitude, description: r.description, kind: "place" as const })),
-        ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
+          ...remote.map((r) => ({
+            id: `r-${r.id}`, label: r.label, state: r.state,
+            latitude: r.latitude, longitude: r.longitude,
+            description: r.description, kind: "place" as const,
+          })),
+        ].filter((s, i, arr) =>
+          arr.findIndex((x) => x.label === s.label && x.state === s.state) === i
+        );
         setOriginSuggestions(merged.slice(0, 8));
-      } catch { if (active) setOriginSuggestions([]); }
-      finally {
-        if (active) {
-          const elapsed = Date.now() - tick;
-          const minVisibleMs = 350;
-          if (elapsed < minVisibleMs) {
-            window.setTimeout(() => {
-              if (active) setOriginSearching(false);
-            }, minVisibleMs - elapsed);
-          } else {
-            setOriginSearching(false);
-          }
-        }
+      } catch {
+        if (active) setOriginSuggestions([]);
+      } finally {
+        if (active) setOriginSearching(false);
       }
     }, 220);
     return () => { active = false; setOriginSearching(false); window.clearTimeout(tid); };
@@ -1582,41 +1687,47 @@ export default function RouteIntelligencePage() {
 
   // Suggestion search – destination
   useEffect(() => {
-    if (destinationInput.trim().length < 2) { setDestinationSuggestions([]); setDestinationSearching(false); return; }
+    if (destinationInput.trim().length < 2) {
+      setDestinationSuggestions([]);
+      setDestinationSearching(false);
+      return;
+    }
     let active = true;
     setDestinationSearching(true);
-    const tick = Date.now();
-    setDestinationSearchTick(tick);
     const tid = window.setTimeout(async () => {
       try {
         const [remote, states, cities] = await Promise.all([
           searchLocations(destinationInput, 5, { state: destination.state }),
-          Promise.resolve(searchStateSuggestions(destinationInput, 3).map((s) => ({ ...s, kind: "state" as const }))),
-          Promise.resolve(searchAreaHubs(destinationInput, 6).map((h) => ({
-            id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`, label: h.label, state: h.state,
-            latitude: h.latitude, longitude: h.longitude, description: `${h.label}, ${h.state}`, kind: "city" as const,
-          }))),
+          Promise.resolve(
+            searchStateSuggestions(destinationInput, 3).map((s) => ({ ...s, kind: "state" as const }))
+          ),
+          Promise.resolve(
+            searchAreaHubs(destinationInput, 6).map((h) => ({
+              id: `area-${h.label.toLowerCase().replace(/\s+/g, "-")}`,
+              label: h.label, state: h.state,
+              latitude: h.latitude, longitude: h.longitude,
+              description: `${h.label}, ${h.state}`,
+              kind: "city" as const,
+            }))
+          ),
         ]);
         if (!active) return;
         const merged = [
           ...states,
           ...cities,
-          ...remote.map((r) => ({ id: `r-${r.id}`, label: r.label, state: r.state, latitude: r.latitude, longitude: r.longitude, description: r.description, kind: "place" as const })),
-        ].filter((s, i, arr) => arr.findIndex((x) => x.label === s.label && x.state === s.state) === i);
+          ...remote.map((r) => ({
+            id: `r-${r.id}`, label: r.label, state: r.state,
+            latitude: r.latitude, longitude: r.longitude,
+            description: r.description, kind: "place" as const,
+          })),
+        ].filter((s, i, arr) =>
+          arr.findIndex((x) => x.label === s.label && x.state === s.state) === i
+        );
         setDestinationSuggestions(merged.slice(0, 8));
-      } catch { if (active) setDestinationSuggestions([]); }
-      finally {
-        if (active) {
-          const elapsed = Date.now() - tick;
-          const minVisibleMs = 350;
-          if (elapsed < minVisibleMs) {
-            window.setTimeout(() => {
-              if (active) setDestinationSearching(false);
-            }, minVisibleMs - elapsed);
-          } else {
-            setDestinationSearching(false);
-          }
-        }
+      } catch {
+        if (active) setDestinationSuggestions([]);
+      } finally {
+        if (active) setDestinationSearching(false);
       }
     }, 220);
     return () => { active = false; setDestinationSearching(false); window.clearTimeout(tid); };
@@ -1628,10 +1739,15 @@ export default function RouteIntelligencePage() {
     watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
         const next: LivePosition = {
-          latitude: position.coords.latitude, longitude: position.coords.longitude,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
           accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
-          speedKph: typeof position.coords.speed === "number" && Number.isFinite(position.coords.speed) ? position.coords.speed * 3.6 : null,
-          heading: typeof position.coords.heading === "number" && Number.isFinite(position.coords.heading) ? position.coords.heading : null,
+          speedKph: typeof position.coords.speed === "number" && Number.isFinite(position.coords.speed)
+            ? position.coords.speed * 3.6
+            : null,
+          heading: typeof position.coords.heading === "number" && Number.isFinite(position.coords.heading)
+            ? position.coords.heading
+            : null,
           updatedAt: new Date(position.timestamp).toISOString(),
         };
         setLivePosition(next);
@@ -1671,7 +1787,8 @@ export default function RouteIntelligencePage() {
                 id: key, title: "Entering risk zone",
                 message: `${z.name} is within ${dist.toFixed(1)}km. Zone score: ${z.riskScore.toFixed(0)}.`,
                 severity: z.riskLevel.includes("critical") || z.riskLevel.includes("high") ? "critical" : "warning",
-                kind: "watch_zone", createdAt: next.updatedAt,
+                kind: "watch_zone",
+                createdAt: next.updatedAt,
               });
             }
           }
@@ -1679,27 +1796,47 @@ export default function RouteIntelligencePage() {
         activeZoneKeysRef.current = nextZoneKeys;
       },
       (err) => { setTrackingError(err.message); setTrackingEnabled(false); },
-      { enableHighAccuracy: travelMode === "walk", maximumAge: travelMode === "drive" ? 4000 : 2000, timeout: 12000 },
+      {
+        enableHighAccuracy: travelMode === "walk",
+        maximumAge: travelMode === "drive" ? 4000 : 2000,
+        timeout: 12000,
+      },
     );
     return () => {
-      if (watchIdRef.current !== null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
     };
   }, [trackingEnabled, travelMode, geolocationSupported, incidentPoints, watchZonePoints, selectedRoute]);
 
   const resolveCurrentLocation = useCallback(() => {
-    if (!geolocationSupported) { setCurrentLocationStatus("Geolocation not available on this device."); return; }
+    if (!geolocationSupported) {
+      setCurrentLocationStatus("Geolocation not available on this device.");
+      return;
+    }
     setCurrentLocationStatus("Finding your location…");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const loc: LivePosition = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy ?? null, speedKph: null, heading: null, updatedAt: new Date().toISOString() };
+        const loc: LivePosition = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy ?? null,
+          speedKph: null, heading: null,
+          updatedAt: new Date().toISOString(),
+        };
         setOriginLocation(loc);
         setUseCurrentLocation(true);
         setCurrentLocationStatus("Using your current location as origin.");
+        triggerFitRoute();
       },
-      () => { setUseCurrentLocation(false); setCurrentLocationStatus("Could not read your location. Please type an address instead."); },
+      () => {
+        setUseCurrentLocation(false);
+        setCurrentLocationStatus("Could not read your location. Please type an address instead.");
+      },
       { enableHighAccuracy: true, timeout: 10000 },
     );
-  }, [geolocationSupported]);
+  }, [geolocationSupported, triggerFitRoute]);
 
   const handleSelectOriginSugg = useCallback((s: RouteHubSuggestion) => {
     const local = routeHubs.find((h) => h.label === s.label);
@@ -1727,6 +1864,15 @@ export default function RouteIntelligencePage() {
     setUseCurrentLocation(false); setCurrentLocationStatus("");
   }, [originId, destinationId, customOrigin, customDestination, originInput, destinationInput]);
 
+  // FIX: Clear useCurrentLocation when user manually types a new origin
+  const handleOriginChange = useCallback((v: string) => {
+    setOriginInput(v);
+    if (useCurrentLocation) {
+      setUseCurrentLocation(false);
+      setCurrentLocationStatus("");
+    }
+  }, [useCurrentLocation]);
+
   const handleLogout = useCallback(() => {
     localStorage.removeItem("geopulse.token");
     localStorage.removeItem("geopulse.user");
@@ -1740,20 +1886,32 @@ export default function RouteIntelligencePage() {
 
   if (!mounted) return null;
 
+  // Use stableRoute for the map so it never flickers to undefined during transitions
+  const mapRoute = stableRoute ?? selectedRoute;
+
   const panelProps = {
     routes: allRoutes,
-    selectedRouteId,
-    onSelectRoute: setSelectedRouteId,
+    selectedRouteId: resolvedSelectedRouteId,
+    onSelectRoute: (id: string) => {
+      setSelectedRouteId(id);
+      // Snap map to newly selected route
+      triggerFitRoute();
+    },
     activeTab,
     onTabChange: setActiveTab,
     originInput, destinationInput, originSuggestions, destinationSuggestions,
     originSearching, destinationSearching,
     departureHour, travelMode,
-    onOriginChange: (v: string) => setOriginInput(v),
+    onOriginChange: handleOriginChange,
     onDestinationChange: (v: string) => setDestinationInput(v),
     onSelectOriginSugg: handleSelectOriginSugg,
     onSelectDestinationSugg: handleSelectDestinationSugg,
-    onClearOrigin: () => { setOriginInput(""); setOriginSuggestions([]); },
+    onClearOrigin: () => {
+      setOriginInput("");
+      setOriginSuggestions([]);
+      setUseCurrentLocation(false);
+      setCurrentLocationStatus("");
+    },
     onClearDestination: () => { setDestinationInput(""); setDestinationSuggestions([]); },
     onHourChange: setDepartureHour,
     onSwap: handleSwap,
@@ -1761,19 +1919,29 @@ export default function RouteIntelligencePage() {
     trackingEnabled, livePosition, useCurrentLocation,
     onUseCurrentLocation: resolveCurrentLocation,
     currentLocationStatus,
-    trackingError: trackingError || (!geolocationSupported && trackingEnabled ? "Geolocation unavailable on this device." : ""),
+    trackingError: trackingError || (!geolocationSupported && trackingEnabled
+      ? "Geolocation unavailable on this device."
+      : ""),
     liveAlerts,
     selectedRouteAdvisories,
     onToggleTracking: () => { setTrackingError(""); setTrackingEnabled((v) => !v); },
     loading,
+    onFitRoute: triggerFitRoute,
   };
+
+  // Pass a stable map center based on the *route path* midpoint rather than
+  // `origin.state`. This prevents the map from re-centering on state changes.
+  const mapCenter = mapRoute ? routeBoundsCenter(mapRoute.routePath) : null;
 
   return (
     <div className="min-h-screen bg-[#060B16] text-white antialiased lg:h-screen lg:overflow-hidden">
       {/* Ambient */}
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_70%_40%_at_0%_0%,rgba(6,182,212,0.05),transparent)]" />
 
-      <LiveAlertBanner alerts={liveAlerts} onDismiss={(id) => setLiveAlerts((a) => a.filter((x) => x.id !== id))} />
+      <LiveAlertBanner
+        alerts={liveAlerts}
+        onDismiss={(id) => setLiveAlerts((a) => a.filter((x) => x.id !== id))}
+      />
 
       <DashboardSidebar
         open={sidebarOpen}
@@ -1793,8 +1961,10 @@ export default function RouteIntelligencePage() {
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
               <span className="text-[10px] uppercase tracking-widest text-cyan-400">Route Intelligence</span>
             </div>
-            {selectedRoute && (
-              <span className="hidden text-sm text-white/35 xl:block">{selectedRoute.routeStops.map((s) => s.label).join(" → ")}</span>
+            {mapRoute && (
+              <span className="hidden text-sm text-white/35 xl:block">
+                {mapRoute.routeStops.map((s) => s.label).join(" → ")}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -1803,32 +1973,44 @@ export default function RouteIntelligencePage() {
                 ● Live {travelMode}
               </span>
             )}
-            {selectedRoute && <RiskPill level={selectedRoute.level} score={selectedRoute.score} />}
-            {selectedRoute && (
+            {mapRoute && <RiskPill level={mapRoute.level} score={mapRoute.score} />}
+            {mapRoute && (
               <span className="flex items-center gap-1.5 text-xs text-white/35">
                 <IconClock />
-                {formatDuration(selectedRoute.durationMin)}
+                {formatDuration(mapRoute.durationMin)}
               </span>
             )}
-            <span className="text-[11px] text-white/25">{alerts.length} alert{alerts.length !== 1 ? "s" : ""}</span>
+            <span className="text-[11px] text-white/25">
+              {alerts.length} alert{alerts.length !== 1 ? "s" : ""}
+            </span>
           </div>
         </header>
 
         {/* Two-column */}
         <div className="grid min-h-0 flex-1 grid-cols-[1fr_400px] overflow-hidden">
-          {/* Map */}
+          {/* Map — FIX: pass fitBoundsTrigger so DashboardMap can re-fit on demand
+              without resetting zoom on every state change. Pass mapCenter derived
+              from route midpoint, not from origin.state string. */}
           <div className="relative min-h-0">
             <DashboardMap
-              selectedState={origin.state}
+              // FIX: do NOT pass selectedState here — it caused re-centering
+              // whenever origin changed. Instead, use a stable center derived
+              // from the route path midpoint.
+              centerLatitude={mapCenter?.latitude}
+              centerLongitude={mapCenter?.longitude}
+              fitBoundsTrigger={fitRouteTrigger}
+              fitBoundsPath={mapRoute?.routePath}
               zoom={6}
               mapStyle="mapbox://styles/mapbox/dark-v11"
               incidents={incidentPoints}
               watchZones={watchZonePoints}
               geofences={geofencePoints}
               showControlsUi={false}
-              routePath={selectedRoute?.routePath}
-              routeStops={selectedRoute?.routeStops}
-              trackedPosition={livePosition ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" } : null}
+              routePath={mapRoute?.routePath}
+              routeStops={mapRoute?.routeStops}
+              trackedPosition={livePosition
+                ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" }
+                : null}
               followTrackedPosition={trackingEnabled}
               showIncidents
               showHeatmap
@@ -1852,16 +2034,21 @@ export default function RouteIntelligencePage() {
         {/* Full-screen map */}
         <div className="fixed inset-0">
           <DashboardMap
-            selectedState={origin.state}
+            centerLatitude={mapCenter?.latitude}
+            centerLongitude={mapCenter?.longitude}
+            fitBoundsTrigger={fitRouteTrigger}
+            fitBoundsPath={mapRoute?.routePath}
             zoom={5}
             mapStyle="mapbox://styles/mapbox/dark-v11"
             incidents={incidentPoints}
             watchZones={watchZonePoints}
             geofences={geofencePoints}
             showControlsUi={false}
-            routePath={selectedRoute?.routePath}
-            routeStops={selectedRoute?.routeStops}
-            trackedPosition={livePosition ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" } : null}
+            routePath={mapRoute?.routePath}
+            routeStops={mapRoute?.routeStops}
+            trackedPosition={livePosition
+              ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" }
+              : null}
             followTrackedPosition={trackingEnabled}
             showIncidents
             showHeatmap
@@ -1884,28 +2071,31 @@ export default function RouteIntelligencePage() {
           </button>
 
           {/* Quick summary pill */}
-          {selectedRoute && (
+          {mapRoute && (
             <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#060B16]/90 px-3 py-2 backdrop-blur-xl">
-              <span className={`h-2 w-2 flex-shrink-0 rounded-full ${RISK_CONFIG[selectedRoute.level].dot}`} />
+              <span className={`h-2 w-2 flex-shrink-0 rounded-full ${RISK_CONFIG[mapRoute.level].dot}`} />
               <span className="min-w-0 flex-1 truncate text-sm text-white/75">
                 {origin.label} → {destination.label}
               </span>
               <span className="flex flex-shrink-0 items-center gap-1 text-xs text-white/50">
-                <IconClock />{formatDuration(selectedRoute.durationMin)}
+                <IconClock />{formatDuration(mapRoute.durationMin)}
               </span>
-              <RiskPill level={selectedRoute.level} score={selectedRoute.score} compact />
+              <RiskPill level={mapRoute.level} score={mapRoute.score} compact />
             </div>
           )}
         </div>
 
-        {/* Bottom sheet */}
+        {/* FIX: Mobile bottom sheet — unified height transition using CSS custom
+            property avoids the max-height / height jank that caused layout jumps. */}
         <div
-          className={`fixed bottom-0 left-0 right-0 z-30 flex flex-col rounded-t-3xl border-t border-white/[0.08] bg-[#060B16]/97 backdrop-blur-2xl transition-[height] duration-300 ease-out ${
-            sheetExpanded ? "h-[88vh]" : "h-[auto]"
-          }`}
-          style={!sheetExpanded ? { maxHeight: "42vh" } : undefined}
+          className="fixed bottom-0 left-0 right-0 z-30 flex flex-col rounded-t-3xl border-t border-white/[0.08] bg-[#060B16]/97 backdrop-blur-2xl"
+          style={{
+            height: sheetExpanded ? "88vh" : "auto",
+            maxHeight: sheetExpanded ? "88vh" : "42vh",
+            transition: "height 300ms ease-out, max-height 300ms ease-out",
+          }}
         >
-          {/* Drag handle + summary */}
+          {/* Drag handle */}
           <button
             onClick={() => setSheetExpanded((v) => !v)}
             className="flex w-full flex-col items-center gap-2 px-4 pb-1 pt-3"
@@ -1915,12 +2105,12 @@ export default function RouteIntelligencePage() {
           </button>
 
           {/* Always-visible quick stats */}
-          {selectedRoute && (
+          {mapRoute && (
             <div className="shrink-0 px-4 pb-3">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-widest text-white/30">Best route</p>
-                  <p className="mt-0.5 text-sm font-bold text-white">{selectedRoute.label}</p>
+                  <p className="mt-0.5 text-sm font-bold text-white">{mapRoute.label}</p>
                 </div>
                 <button
                   onClick={() => setSheetExpanded((v) => !v)}
@@ -1932,10 +2122,10 @@ export default function RouteIntelligencePage() {
               </div>
               <div className="mt-2.5 grid grid-cols-4 gap-2">
                 {[
-                  { label: "ETA", value: formatDuration(selectedRoute.durationMin), icon: <IconClock /> },
-                  { label: "Distance", value: formatDistance(selectedRoute.distanceKm), icon: <IconRoute /> },
-                  { label: "Threats", value: String(selectedRoute.incidents.length), icon: <IconWarning /> },
-                  { label: "Risk", value: String(selectedRoute.score), icon: <IconShield /> },
+                  { label: "ETA", value: formatDuration(mapRoute.durationMin), icon: <IconClock /> },
+                  { label: "Distance", value: formatDistance(mapRoute.distanceKm), icon: <IconRoute /> },
+                  { label: "Threats", value: String(mapRoute.incidents.length), icon: <IconWarning /> },
+                  { label: "Risk", value: String(mapRoute.score), icon: <IconShield /> },
                 ].map((stat) => (
                   <div key={stat.label} className="flex flex-col items-center rounded-xl border border-white/[0.06] bg-white/[0.03] p-2">
                     <span className="text-white/30">{stat.icon}</span>
