@@ -11,6 +11,7 @@ import { getCurrentRole, getPublicNavItems, type NavItem } from "@/lib/access";
 import { formatReportType, normalizeReportType } from "@/lib/report-types";
 import { searchLocations, searchStateSuggestions, type LocationSearchResult } from "@/lib/location-search";
 import { searchAreaHubs } from "@/lib/user-location";
+import { toWeatherIntelligenceResponse, type WeatherIntelligenceResponse } from "@/lib/weather-intelligence";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,7 @@ type GeofenceRecord = {
   centroid_latitude: number | string | null;
   centroid_longitude: number | string | null;
   radius_meters: number | string | null; description: string;
+  metadata?: Record<string, unknown>;
 };
 
 type DashboardAlert = {
@@ -885,6 +887,7 @@ function MainPanel({
   currentLocationStatus,
   trackingError,
   liveAlerts,
+  selectedRouteAdvisories,
   onToggleTracking,
   loading,
 }: {
@@ -917,6 +920,7 @@ function MainPanel({
   currentLocationStatus: string;
   trackingError: string;
   liveAlerts: LiveAlert[];
+  selectedRouteAdvisories: string[];
   onToggleTracking: () => void;
   loading: boolean;
 }) {
@@ -1051,6 +1055,14 @@ function MainPanel({
               <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
                 <p className="mb-3 text-[10px] uppercase tracking-widest text-white/30">Route details</p>
                 <ScoreMeter score={selectedRoute.score} level={selectedRoute.level} />
+                {selectedRouteAdvisories.some((advisory) => /weather|rain|visibility|flood|storm/i.test(advisory)) && (
+                  <div className="mt-3 rounded-xl border border-cyan-500/15 bg-cyan-500/5 p-3">
+                    <p className="text-[10px] uppercase tracking-widest text-cyan-400/70">Weather-aware route warnings</p>
+                    <p className="mt-1 text-xs leading-5 text-white/55">
+                      Rainfall and visibility signals are folded into this route recommendation.
+                    </p>
+                  </div>
+                )}
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   {[
                     { label: "ETA", value: formatDuration(selectedRoute.durationMin) },
@@ -1064,7 +1076,7 @@ function MainPanel({
                   ))}
                 </div>
                 <div className="mt-3 space-y-1.5">
-                  {selectedRoute.advisories.map((a, i) => (
+                  {selectedRouteAdvisories.map((a, i) => (
                     <div key={i} className="flex gap-2 text-[11px] leading-5 text-white/40">
                       <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-white/20" />
                       {a}
@@ -1284,6 +1296,7 @@ export default function RouteIntelligencePage() {
   const [watchZones, setWatchZones] = useState<WatchZoneRecord[]>([]);
   const [geofences, setGeofences] = useState<GeofenceRecord[]>([]);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
+  const [weatherIntel, setWeatherIntel] = useState<WeatherIntelligenceResponse | null>(null);
   const [loading, setLoading] = useState(Boolean(authToken));
   const geolocationSupported = typeof window !== "undefined" && Boolean(navigator?.geolocation);
 
@@ -1345,7 +1358,19 @@ export default function RouteIntelligencePage() {
           setIncidents(nextIncidents);
         }
         if (wRes.ok) setWatchZones(getList(wData));
-        if (gRes.ok) setGeofences(getList(gData));
+        if (gRes.ok) {
+          const allGeofences = getList(gData) as GeofenceRecord[];
+          const userGeofences = (allGeofences || []).filter((g) => {
+            const md = g.metadata ?? {};
+            if (!md) return true;
+            if (md.import_dataset) return false;
+            if (md.imported) return false;
+            if (md.demo) return false;
+            if (md.source) return false;
+            return true;
+          });
+          setGeofences(userGeofences);
+        }
         if (aRes.ok) {
           setAlerts(
             getList(aData as ApiListResponse<Record<string, unknown>>).map((a, i) => {
@@ -1372,7 +1397,7 @@ export default function RouteIntelligencePage() {
     () => incidents.flatMap((inc) => {
       const lat = toNumber(inc.latitude), lng = toNumber(inc.longitude);
       if (lat === null || lng === null) return [];
-      return [{ id: inc.id, title: inc.title, incidentType: normalizeReportType(inc.incident_type), severity: inc.severity, confidence: inc.confidence, status: inc.status, summary: inc.summary, detectedAt: inc.detected_at || inc.created_at, latitude: lat, longitude: lng, locationName: inc.location_name }];
+      return [{ id: inc.id, title: inc.title, incidentType: normalizeReportType(inc.incident_type), severity: inc.severity, confidence: inc.confidence, status: inc.status, summary: inc.summary, detectedAt: inc.detected_at || inc.created_at, latitude: lat, longitude: lng, locationName: inc.location_name, visibilityScore: typeof inc.visibility_score === "number" ? inc.visibility_score : undefined }];
     }),
     [incidents],
   );
@@ -1395,6 +1420,26 @@ export default function RouteIntelligencePage() {
     [geofences],
   );
 
+  const weatherOverlayPoints = useMemo(
+    () => weatherIntel?.overlay ?? [],
+    [weatherIntel],
+  );
+
+  const weatherAdjustedWatchZonePoints = useMemo(() => {
+    const adjustmentMap = new Map(
+      (weatherIntel?.riskZoneAdjustments ?? []).map((item) => [item.watchZoneId, item]),
+    );
+    return watchZonePoints.map((zone) => {
+      const adjustment = adjustmentMap.get(String(zone.id));
+      if (!adjustment) return zone;
+      return {
+        ...zone,
+        riskLevel: adjustment.weatherAdjustedRiskLevel,
+        riskScore: adjustment.weatherAdjustedRiskScore,
+      };
+    });
+  }, [watchZonePoints, weatherIntel]);
+
   const routeHubs = useMemo(() => buildRouteHubs(watchZones, geofences), [watchZones, geofences]);
   const currentOriginHub = useMemo(
     () => (useCurrentLocation && originLocation ? makeCurrentLocationHub(originLocation) : null),
@@ -1404,8 +1449,8 @@ export default function RouteIntelligencePage() {
   const destination = customDestination ?? routeHubs.find((h) => h.id === destinationId) ?? routeHubs[1];
 
   const allRoutes = useMemo(
-    () => buildAllRouteOptions(origin, destination, departureHour, travelMode, incidentPoints, watchZonePoints, routeHubs),
-    [origin, destination, departureHour, travelMode, incidentPoints, watchZonePoints, routeHubs],
+    () => buildAllRouteOptions(origin, destination, departureHour, travelMode, incidentPoints, weatherAdjustedWatchZonePoints, routeHubs),
+    [origin, destination, departureHour, travelMode, incidentPoints, weatherAdjustedWatchZonePoints, routeHubs],
   );
 
   // Auto-select best route when routes change
@@ -1417,9 +1462,81 @@ export default function RouteIntelligencePage() {
   const selectedRoute = allRoutes.find((r) => r.id === selectedRouteId) ?? allRoutes[0];
 
   useEffect(() => {
+    if (!authToken || !selectedRoute) {
+      setWeatherIntel(null);
+      return;
+    }
+
+    let active = true;
+    async function loadWeather() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/weather-intelligence/`, {
+          method: "POST",
+          headers: {
+            Authorization: `Token ${authToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            points: selectedRoute.incidents.slice(0, 24).map((incident) => ({
+              id: `incident-${incident.id}`,
+              latitude: incident.latitude,
+              longitude: incident.longitude,
+              label: incident.title,
+              kind: "incident",
+              incident_type: incident.incidentType,
+              severity: incident.severity,
+              summary: incident.summary,
+              location_name: incident.locationName,
+            })),
+            watch_zones: weatherAdjustedWatchZonePoints.slice(0, 24).map((zone) => ({
+              id: String(zone.id),
+              name: zone.name,
+              latitude: zone.latitude,
+              longitude: zone.longitude,
+              risk_level: zone.riskLevel,
+              risk_score: zone.riskScore,
+            })),
+            route_path: selectedRoute.routePath,
+          }),
+        });
+        if (!response.ok || !active) return;
+        const payload = await response.json();
+        if (!active) return;
+        setWeatherIntel(toWeatherIntelligenceResponse(payload));
+      } catch {
+        if (active) setWeatherIntel(null);
+      }
+    }
+
+    void loadWeather();
+    return () => {
+      active = false;
+    };
+  }, [authToken, selectedRoute, weatherAdjustedWatchZonePoints]);
+
+  useEffect(() => {
     if (!selectedRoute) return;
     liveContextRef.current = { corridorKm: selectedRoute.corridorKm, routePath: selectedRoute.routePath, travelMode, livePosition };
   }, [selectedRoute, livePosition, travelMode]);
+
+  const selectedRouteWeatherAdvisories = useMemo(
+    () => weatherIntel?.route.advisories ?? [],
+    [weatherIntel],
+  );
+
+  const selectedRouteAdvisories = useMemo(() => {
+    if (!selectedRoute) return selectedRouteWeatherAdvisories;
+    const merged = [...selectedRoute.advisories];
+    selectedRouteWeatherAdvisories.forEach((advisory) => {
+      if (!merged.includes(advisory)) merged.push(advisory);
+    });
+    return merged;
+  }, [selectedRoute, selectedRouteWeatherAdvisories]);
+
+  const selectedRouteWeatherSegments = useMemo(
+    () => weatherIntel?.route.segments ?? [],
+    [weatherIntel],
+  );
 
   // Suggestion search – origin
   useEffect(() => {
@@ -1646,6 +1763,7 @@ export default function RouteIntelligencePage() {
     currentLocationStatus,
     trackingError: trackingError || (!geolocationSupported && trackingEnabled ? "Geolocation unavailable on this device." : ""),
     liveAlerts,
+    selectedRouteAdvisories,
     onToggleTracking: () => { setTrackingError(""); setTrackingEnabled((v) => !v); },
     loading,
   };
@@ -1712,7 +1830,13 @@ export default function RouteIntelligencePage() {
               routeStops={selectedRoute?.routeStops}
               trackedPosition={livePosition ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" } : null}
               followTrackedPosition={trackingEnabled}
-              showIncidents showHeatmap showRiskZones showGeofencing={false}
+              showIncidents
+              showHeatmap
+              showRiskZones
+              showGeofencing={false}
+              showWeatherLayer
+              weatherOverlay={weatherOverlayPoints}
+              routeWeatherSegments={selectedRouteWeatherSegments}
             />
           </div>
 
@@ -1739,7 +1863,13 @@ export default function RouteIntelligencePage() {
             routeStops={selectedRoute?.routeStops}
             trackedPosition={livePosition ? { latitude: livePosition.latitude, longitude: livePosition.longitude, label: "You" } : null}
             followTrackedPosition={trackingEnabled}
-            showIncidents showHeatmap showRiskZones showGeofencing={false}
+            showIncidents
+            showHeatmap
+            showRiskZones
+            showGeofencing={false}
+            showWeatherLayer
+            weatherOverlay={weatherOverlayPoints}
+            routeWeatherSegments={selectedRouteWeatherSegments}
           />
         </div>
 

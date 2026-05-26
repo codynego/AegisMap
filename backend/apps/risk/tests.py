@@ -1,4 +1,5 @@
 from django.test import TestCase, override_settings
+from unittest.mock import patch
 
 from apps.users.models import UserRole
 
@@ -189,3 +190,105 @@ class RiskForecastTests(TestCase):
 
         response = self.client.get("/api/risk-forecasts/")
         self.assertEqual(response.status_code, 403)
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class WeatherIntelligenceTests(TestCase):
+    def setUp(self):
+        register_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "weather_user",
+                "email": "weather@example.com",
+                "password": "strongpass123",
+            },
+        )
+        token = register_response.json()["token"]
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Token {token}"
+
+    @patch("apps.risk.services._fetch_weather_rows")
+    def test_weather_intelligence_endpoint_returns_overlay_route_and_risk_adjustments(self, mock_rows):
+        mock_rows.return_value = [
+            {
+                "id": "incident-1",
+                "latitude": 6.335,
+                "longitude": 5.6037,
+                "label": "Flood incident",
+                "kind": "incident",
+                "incident_type": "flood",
+                "severity_hint": "high",
+                "summary": "Flooding on the corridor",
+                "location_name": "Benin City",
+                "precipitation_mm": 11.5,
+                "visibility_m": 2200.0,
+                "weather_code": 65,
+            },
+            {
+                "id": "watch-zone-2",
+                "latitude": 6.34,
+                "longitude": 5.61,
+                "label": "Benin Drainage Belt",
+                "kind": "watch_zone",
+                "incident_type": "",
+                "severity_hint": "",
+                "summary": "",
+                "location_name": "",
+                "precipitation_mm": 9.0,
+                "visibility_m": 3500.0,
+                "weather_code": 63,
+            },
+            {
+                "id": "route-segment-0",
+                "latitude": 6.3375,
+                "longitude": 5.61185,
+                "label": "Route segment 1",
+                "kind": "route_segment",
+                "incident_type": "",
+                "severity_hint": "",
+                "summary": "",
+                "location_name": "",
+                "precipitation_mm": 8.5,
+                "visibility_m": 2800.0,
+                "weather_code": 81,
+            },
+        ]
+
+        response = self.client.post(
+            "/api/weather-intelligence/",
+            {
+                "points": [
+                    {
+                        "id": "incident-1",
+                        "latitude": 6.335,
+                        "longitude": 5.6037,
+                        "label": "Flood incident",
+                        "kind": "incident",
+                        "incident_type": "flood",
+                        "severity": "high",
+                        "summary": "Flooding on the corridor",
+                        "location_name": "Benin City",
+                    }
+                ],
+                "watch_zones": [
+                    {
+                        "id": "2",
+                        "name": "Benin Drainage Belt",
+                        "latitude": 6.34,
+                        "longitude": 5.61,
+                        "risk_level": "medium_risk",
+                        "risk_score": 58,
+                    }
+                ],
+                "route_path": [[5.6037, 6.335], [5.62, 6.34]],
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"], "Open-Meteo ECMWF")
+        self.assertGreaterEqual(len(payload["overlay"]), 3)
+        self.assertEqual(payload["incident_contexts"][0]["source_id"], "incident-1")
+        self.assertTrue(payload["route"]["advisories"])
+        self.assertEqual(payload["route"]["segments"][0]["severity"], "high")
+        self.assertEqual(payload["risk_zone_adjustments"][0]["watch_zone_id"], "2")
+        self.assertGreater(payload["risk_zone_adjustments"][0]["weather_adjusted_risk_score"], 58)

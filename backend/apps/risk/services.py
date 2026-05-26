@@ -1,5 +1,9 @@
 from decimal import Decimal
+import json
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.audit_logs.services import record_audit_event
@@ -461,3 +465,361 @@ def build_risk_forecasts() -> list[dict]:
             forecasts.append(forecast)
 
     return sorted(forecasts, key=lambda item: (item["probability"], item["confidence"]), reverse=True)[:12]
+
+
+WEATHER_CODE_LABELS = {
+    0: "Clear conditions",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Dense drizzle",
+    56: "Freezing drizzle",
+    57: "Dense freezing drizzle",
+    61: "Light rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    66: "Freezing rain",
+    67: "Heavy freezing rain",
+    71: "Light snow",
+    73: "Moderate snow",
+    75: "Heavy snow",
+    77: "Snow grains",
+    80: "Rain showers",
+    81: "Heavy rain showers",
+    82: "Violent rain showers",
+    85: "Snow showers",
+    86: "Heavy snow showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with hail",
+    99: "Severe thunderstorm with hail",
+}
+
+
+def _weather_label(code: int | None) -> str:
+    if code is None:
+        return "Weather signal detected"
+    return WEATHER_CODE_LABELS.get(code, "Weather signal detected")
+
+
+def _weather_severity(precipitation_mm: float, visibility_m: float | None, weather_code: int | None) -> str:
+    if (
+        precipitation_mm >= 18
+        or (visibility_m is not None and visibility_m < 1000)
+        or weather_code in {95, 96, 99}
+    ):
+        return "extreme"
+    if (
+        precipitation_mm >= 8
+        or (visibility_m is not None and visibility_m < 3000)
+        or weather_code in {65, 67, 81, 82}
+    ):
+        return "high"
+    if (
+        precipitation_mm >= 2
+        or (visibility_m is not None and visibility_m < 7000)
+        or weather_code in {45, 48, 53, 55, 61, 63, 80}
+    ):
+        return "moderate"
+    return "low"
+
+
+def _weather_intensity(severity: str, precipitation_mm: float, visibility_m: float | None) -> float:
+    base = {
+        "low": 0.25,
+        "moderate": 0.5,
+        "high": 0.78,
+        "extreme": 1.0,
+    }[severity]
+    precipitation_boost = min(0.28, precipitation_mm / 30)
+    visibility_boost = 0
+    if visibility_m is not None:
+        visibility_boost = min(0.24, max(0, (7000 - visibility_m) / 7000))
+    return round(min(1.0, base + precipitation_boost + visibility_boost), 3)
+
+
+def _rainfall_intensity_label(precipitation_mm: float) -> str:
+    if precipitation_mm >= 18:
+        return "Very high"
+    if precipitation_mm >= 8:
+        return "High"
+    if precipitation_mm >= 2:
+        return "Moderate"
+    if precipitation_mm > 0:
+        return "Light"
+    return "Minimal"
+
+
+def _visibility_label(visibility_m: float | None) -> str:
+    if visibility_m is None:
+        return "Unknown"
+    if visibility_m < 1000:
+        return "Very low"
+    if visibility_m < 3000:
+        return "Low"
+    if visibility_m < 7000:
+        return "Reduced"
+    return "Normal"
+
+
+def _normalize_risk_level(score: float) -> str:
+    if score >= 85:
+        return RiskLevel.CRITICAL
+    if score >= 65:
+        return RiskLevel.HIGH
+    if score >= 40:
+        return RiskLevel.MEDIUM
+    if score >= 20:
+        return RiskLevel.ELEVATED
+    return RiskLevel.BASELINE
+
+
+def _nearest_weather_point(latitude: float, longitude: float, overlays: list[dict]) -> dict | None:
+    best_match = None
+    best_distance = float("inf")
+    for overlay in overlays:
+        distance = _haversine(latitude, longitude, overlay["latitude"], overlay["longitude"])
+        if distance < best_distance:
+            best_distance = distance
+            best_match = overlay
+    return best_match
+
+
+def _fetch_weather_rows(points: list[dict]) -> list[dict]:
+    if not points:
+        return []
+
+    params = urlencode(
+        {
+            "latitude": ",".join(f"{point['latitude']:.5f}" for point in points),
+            "longitude": ",".join(f"{point['longitude']:.5f}" for point in points),
+            "current": "precipitation,visibility,weather_code",
+            "timezone": "GMT",
+            "forecast_hours": 1,
+        }
+    )
+    request_url = f"{settings.WEATHER_INTELLIGENCE_BASE_URL}?{params}"
+
+    with urlopen(request_url, timeout=settings.WEATHER_INTELLIGENCE_TIMEOUT_SECONDS) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if isinstance(payload, list):
+        rows = payload
+    else:
+        rows = [payload]
+
+    mapped = []
+    for index, row in enumerate(rows):
+        current = row.get("current", {})
+        point = points[index]
+        mapped.append(
+            {
+                "id": point.get("id") or f"point-{index}",
+                "latitude": point["latitude"],
+                "longitude": point["longitude"],
+                "label": point.get("label") or point.get("location_name") or "Weather point",
+                "kind": point.get("kind") or "point",
+                "incident_type": point.get("incident_type") or "",
+                "severity_hint": point.get("severity") or "",
+                "summary": point.get("summary") or "",
+                "location_name": point.get("location_name") or "",
+                "precipitation_mm": float(current.get("precipitation") or 0),
+                "visibility_m": (
+                    float(current["visibility"]) if current.get("visibility") is not None else None
+                ),
+                "weather_code": int(current["weather_code"]) if current.get("weather_code") is not None else None,
+            }
+        )
+    return mapped
+
+
+def build_weather_intelligence(points: list[dict], watch_zones: list[dict], route_path: list[list[float]]) -> dict:
+    requested_points = [*points]
+    for zone in watch_zones:
+        requested_points.append(
+            {
+                "id": f"watch-zone-{zone['id']}",
+                "latitude": zone["latitude"],
+                "longitude": zone["longitude"],
+                "label": zone["name"],
+                "kind": "watch_zone",
+            }
+        )
+
+    if len(route_path) >= 2:
+        for index in range(len(route_path) - 1):
+            start_lng, start_lat = route_path[index]
+            end_lng, end_lat = route_path[index + 1]
+            requested_points.append(
+                {
+                    "id": f"route-segment-{index}",
+                    "latitude": round((start_lat + end_lat) / 2, 5),
+                    "longitude": round((start_lng + end_lng) / 2, 5),
+                    "label": f"Route segment {index + 1}",
+                    "kind": "route_segment",
+                }
+            )
+
+    weather_rows = _fetch_weather_rows(requested_points)
+    overlays: list[dict] = []
+    incident_contexts: list[dict] = []
+    alerts: list[dict] = []
+    route_segments: list[dict] = []
+
+    for row in weather_rows:
+        severity = _weather_severity(row["precipitation_mm"], row["visibility_m"], row["weather_code"])
+        overlay = {
+            "source_id": row["id"],
+            "kind": row["kind"],
+            "latitude": row["latitude"],
+            "longitude": row["longitude"],
+            "severity": severity,
+            "intensity": _weather_intensity(severity, row["precipitation_mm"], row["visibility_m"]),
+            "title": _weather_label(row["weather_code"]),
+            "summary": (
+                f"{_rainfall_intensity_label(row['precipitation_mm'])} precipitation with "
+                f"{_visibility_label(row['visibility_m']).lower()} visibility."
+            ),
+            "precipitation_mm": round(row["precipitation_mm"], 2),
+            "visibility_km": round((row["visibility_m"] or 0) / 1000, 2) if row["visibility_m"] is not None else None,
+            "weather_code": row["weather_code"],
+            "label": row["label"],
+        }
+        overlays.append(overlay)
+
+        if row["kind"] == "incident":
+            context = {
+                "source_id": row["id"],
+                "label": "Weather context",
+                "severity": severity,
+                "rainfall_intensity": _rainfall_intensity_label(row["precipitation_mm"]),
+                "visibility": _visibility_label(row["visibility_m"]),
+                "summary": (
+                    f"{_weather_label(row['weather_code'])}. "
+                    f"Rainfall is {_rainfall_intensity_label(row['precipitation_mm']).lower()} and visibility is "
+                    f"{_visibility_label(row['visibility_m']).lower()} around this incident."
+                ),
+                "alerts": [
+                    f"{_rainfall_intensity_label(row['precipitation_mm'])} rainfall detected",
+                    f"{_visibility_label(row['visibility_m'])} visibility",
+                ],
+                "precipitation_mm": overlay["precipitation_mm"],
+                "visibility_km": overlay["visibility_km"],
+                "weather_code": row["weather_code"],
+            }
+            incident_contexts.append(context)
+            if severity in {"high", "extreme"}:
+                alerts.append(
+                    {
+                        "id": f"incident-weather-{row['id']}",
+                        "severity": severity,
+                        "title": f"{_weather_label(row['weather_code'])} near {row['label']}",
+                        "summary": context["summary"],
+                        "latitude": row["latitude"],
+                        "longitude": row["longitude"],
+                        "source_id": row["id"],
+                    }
+                )
+
+        if row["kind"] == "route_segment":
+            route_segments.append(
+                {
+                    "source_id": row["id"],
+                    "severity": severity,
+                    "summary": (
+                        f"{_rainfall_intensity_label(row['precipitation_mm'])} rain, "
+                        f"{_visibility_label(row['visibility_m']).lower()} visibility."
+                    ),
+                    "precipitation_mm": overlay["precipitation_mm"],
+                    "visibility_km": overlay["visibility_km"],
+                }
+            )
+
+    risk_zone_adjustments = []
+    for zone in watch_zones:
+        nearest = _nearest_weather_point(zone["latitude"], zone["longitude"], overlays)
+        if nearest is None:
+            continue
+        bump = {
+            "low": 0,
+            "moderate": 8,
+            "high": 14,
+            "extreme": 22,
+        }[nearest["severity"]]
+        adjusted_score = min(100, round(float(zone["risk_score"]) + bump, 2))
+        risk_zone_adjustments.append(
+            {
+                "watch_zone_id": str(zone["id"]),
+                "weather_severity": nearest["severity"],
+                "weather_adjusted_risk_score": adjusted_score,
+                "weather_adjusted_risk_level": _normalize_risk_level(adjusted_score),
+                "summary": (
+                    f"{nearest['title']} is increasing exposure around {zone['name']}."
+                ),
+            }
+        )
+        if nearest["severity"] in {"high", "extreme"}:
+            alerts.append(
+                {
+                    "id": f"watch-zone-weather-{zone['id']}",
+                    "severity": nearest["severity"],
+                    "title": f"Flood / weather pressure near {zone['name']}",
+                    "summary": (
+                        f"{nearest['summary']} Risk score should be treated as elevated."
+                    ),
+                    "latitude": zone["latitude"],
+                    "longitude": zone["longitude"],
+                    "source_id": str(zone["id"]),
+                }
+            )
+
+    route = {"advisories": [], "segments": [], "max_severity": "low"}
+    if len(route_path) >= 2 and route_segments:
+        max_severity = max(
+            route_segments,
+            key=lambda segment: {"low": 0, "moderate": 1, "high": 2, "extreme": 3}[segment["severity"]],
+        )["severity"]
+        advisories = []
+        high_segments = [
+            segment for segment in route_segments if segment["severity"] in {"high", "extreme"}
+        ]
+        reduced_visibility = [
+            segment
+            for segment in route_segments
+            if segment["visibility_km"] is not None and segment["visibility_km"] < 7
+        ]
+        if high_segments:
+            advisories.append(
+                f"{len(high_segments)} route segment{'s' if len(high_segments) != 1 else ''} have heavy rainfall or storm pressure."
+            )
+        if reduced_visibility:
+            advisories.append(
+                f"{len(reduced_visibility)} route segment{'s' if len(reduced_visibility) != 1 else ''} show low or reduced visibility."
+            )
+        if not advisories:
+            advisories.append("Weather impact on the corridor is currently limited.")
+        route = {
+            "advisories": advisories,
+            "segments": [
+                {
+                    **segment,
+                    "start": route_path[index],
+                    "end": route_path[index + 1],
+                }
+                for index, segment in enumerate(route_segments[: len(route_path) - 1])
+            ],
+            "max_severity": max_severity,
+        }
+
+    return {
+        "provider": "Open-Meteo ECMWF",
+        "fetched_at": timezone.now().isoformat(),
+        "overlay": overlays,
+        "incident_contexts": incident_contexts,
+        "alerts": alerts,
+        "risk_zone_adjustments": risk_zone_adjustments,
+        "route": route,
+    }

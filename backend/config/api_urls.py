@@ -6,7 +6,7 @@ from apps.audit_logs.views import AuditEventViewSet
 from apps.geofences.views import GeofenceViewSet
 from apps.incidents.views import IncidentViewSet, PatternViewSet, SignalClusterViewSet
 from apps.media_assets.views import MediaAssetViewSet, PatrolUploadViewSet
-from apps.risk.views import RiskForecastViewSet, RiskSnapshotViewSet, WatchZoneViewSet
+from apps.risk.views import RiskForecastViewSet, RiskSnapshotViewSet, WatchZoneViewSet, WeatherIntelligenceView
 from apps.signals.views import (
     SignalAnalyticsViewSet,
     SignalEvidenceViewSet,
@@ -54,6 +54,7 @@ urlpatterns = [
     path("docs/summary/", ApiDocsSummaryView.as_view(), name="api-docs-summary"),
     path("public/safety-summary/", PublicSafetySummaryView.as_view(), name="public-safety-summary"),
     path("dashboard/summary/", DashboardSummaryView.as_view(), name="dashboard-summary"),
+    path("weather-intelligence/", WeatherIntelligenceView.as_view(), name="weather-intelligence"),
     path("auth/register/", RegisterView.as_view(), name="auth-register"),
     path("auth/login/", LoginView.as_view(), name="auth-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),

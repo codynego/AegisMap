@@ -150,3 +150,11 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': int(os.getenv("TOKEN_PAGE_SIZE", "20")),
 }
+
+WEATHER_INTELLIGENCE_BASE_URL = os.getenv(
+    "WEATHER_INTELLIGENCE_BASE_URL",
+    "https://api.open-meteo.com/v1/ecmwf",
+)
+WEATHER_INTELLIGENCE_TIMEOUT_SECONDS = float(
+    os.getenv("WEATHER_INTELLIGENCE_TIMEOUT_SECONDS", "8.0")
+)

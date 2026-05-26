@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole } from "@/lib/access";
@@ -287,6 +287,7 @@ export default function IncidentReportsPage() {
   const role = getCurrentRole();
 
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState(2);
@@ -343,6 +344,26 @@ export default function IncidentReportsPage() {
       window.clearTimeout(timeoutId);
     };
   }, [isLocationSuggestionOpen, locationName]);
+
+  useEffect(() => {
+    const latValue = searchParams.get("lat");
+    const lngValue = searchParams.get("lng");
+    if (!latValue || !lngValue) {
+      return;
+    }
+
+    const latitude = Number(latValue);
+    const longitude = Number(lngValue);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return;
+    }
+
+    const label = searchParams.get("label")?.trim() || coordinateLocationLabel(latitude, longitude);
+    setExactPin({ latitude, longitude, label });
+    setLocationName((current) => (current.trim() ? current : label));
+    setMapZoom(5);
+    setStatusMessage(null);
+  }, [searchParams]);
 
   const selectedReportType = useMemo(
     () => REPORT_TYPES.find((item) => item.value === reportType) ?? REPORT_TYPES[0],

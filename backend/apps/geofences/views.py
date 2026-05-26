@@ -1,6 +1,6 @@
 from rest_framework import viewsets
 
-from apps.users.permissions import IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import AllowCreateAuthenticatedReadAnalystWrite
 
 from .models import Geofence
 from .serializers import GeofenceSerializer
@@ -8,7 +8,7 @@ from .serializers import GeofenceSerializer
 
 class GeofenceViewSet(viewsets.ModelViewSet):
     serializer_class = GeofenceSerializer
-    permission_classes = [IsAuthenticatedReadAnalystWrite]
+    permission_classes = [AllowCreateAuthenticatedReadAnalystWrite]
     queryset = Geofence.objects.all()
 
     def get_queryset(self):

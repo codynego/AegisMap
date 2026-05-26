@@ -11,6 +11,7 @@ export type DashboardSidebarProps = {
   role: AppRole;
   title?: string;
   subtitle?: string;
+  mobileExtraContent?: React.ReactNode;
 };
 
 export function DashboardSidebar({
@@ -22,6 +23,7 @@ export function DashboardSidebar({
   role,
   title = "GeoPulse AI",
   subtitle = "Safety Intelligence",
+  mobileExtraContent,
 }: DashboardSidebarProps) {
   const navItems = isAnalystRole(role) ? INTERNAL_NAV_ITEMS : getPublicNavItems(role);
 
@@ -67,6 +69,12 @@ export function DashboardSidebar({
             );
           })}
         </nav>
+
+        {mobileExtraContent ? (
+          <div className="border-t border-white/[0.06] px-3 py-3 lg:hidden">
+            {mobileExtraContent}
+          </div>
+        ) : null}
 
         <div className="border-t border-white/[0.06] p-3">
           <button

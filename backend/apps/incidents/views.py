@@ -6,7 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.audit_logs.services import record_audit_event
-from apps.users.permissions import IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import AllowCreateAuthenticatedReadAnalystWrite
 from apps.users.permissions import is_analyst_or_admin, get_user_role
 from apps.users.models import UserRole
 
@@ -23,7 +23,7 @@ from .services import (
 
 class SignalClusterViewSet(viewsets.ModelViewSet):
     serializer_class = SignalClusterSerializer
-    permission_classes = [IsAuthenticatedReadAnalystWrite]
+    permission_classes = [AllowCreateAuthenticatedReadAnalystWrite]
     queryset = SignalCluster.objects.annotate(signal_count=Count("signals")).order_by(
         "-updated_at"
     )
@@ -46,7 +46,7 @@ class SignalClusterViewSet(viewsets.ModelViewSet):
 
 class PatternViewSet(viewsets.ModelViewSet):
     serializer_class = PatternSerializer
-    permission_classes = [IsAuthenticatedReadAnalystWrite]
+    permission_classes = [AllowCreateAuthenticatedReadAnalystWrite]
     queryset = Pattern.objects.select_related("cluster")
 
     def get_queryset(self):
@@ -101,7 +101,7 @@ class PatternViewSet(viewsets.ModelViewSet):
 
 class IncidentViewSet(viewsets.ModelViewSet):
     serializer_class = IncidentSerializer
-    permission_classes = [IsAuthenticatedReadAnalystWrite]
+    permission_classes = [AllowCreateAuthenticatedReadAnalystWrite]
     queryset = Incident.objects.select_related("pattern", "primary_signal")
 
     def get_queryset(self):

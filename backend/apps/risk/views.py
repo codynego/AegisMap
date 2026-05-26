@@ -1,13 +1,25 @@
-from rest_framework import viewsets
+from urllib.error import URLError
+
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.audit_logs.services import record_audit_event
-from apps.users.permissions import IsAnalystOrAdmin, IsAuthenticatedReadAnalystWrite
+from apps.users.permissions import (
+    IsAnalystOrAdmin,
+    IsAuthenticatedCreateReadAnalystWrite,
+    IsAuthenticatedReadAnalystWrite,
+)
 
 from .models import RiskSnapshot, WatchZone
-from .serializers import RiskForecastSerializer, RiskSnapshotSerializer, WatchZoneSerializer
-from .services import _haversine, build_risk_forecasts, evaluate_watch_zone
+from .serializers import (
+    RiskForecastSerializer,
+    RiskSnapshotSerializer,
+    WatchZoneSerializer,
+    WeatherIntelligenceRequestSerializer,
+)
+from .services import _haversine, build_risk_forecasts, build_weather_intelligence, evaluate_watch_zone
 
 
 class WatchZoneViewSet(viewsets.ModelViewSet):
@@ -104,3 +116,26 @@ class RiskForecastViewSet(viewsets.ViewSet):
                 pass
 
         return Response(RiskForecastSerializer(forecasts, many=True).data)
+
+
+class WeatherIntelligenceView(APIView):
+    permission_classes = [IsAuthenticatedCreateReadAnalystWrite]
+
+    def post(self, request):
+        serializer = WeatherIntelligenceRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        try:
+            intelligence = build_weather_intelligence(
+                points=payload.get("points", []),
+                watch_zones=payload.get("watch_zones", []),
+                route_path=payload.get("route_path", []),
+            )
+        except URLError:
+            return Response(
+                {"detail": "Weather provider is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return Response(intelligence)

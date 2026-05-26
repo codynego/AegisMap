@@ -66,3 +66,33 @@ class RiskForecastSerializer(serializers.Serializer):
     night_share = serializers.FloatField()
     route_signal = serializers.FloatField()
     anomaly_signal = serializers.FloatField()
+
+
+class WeatherPointInputSerializer(serializers.Serializer):
+    id = serializers.CharField(required=False, allow_blank=True)
+    latitude = serializers.FloatField()
+    longitude = serializers.FloatField()
+    label = serializers.CharField(required=False, allow_blank=True)
+    kind = serializers.CharField(required=False, allow_blank=True)
+    incident_type = serializers.CharField(required=False, allow_blank=True)
+    severity = serializers.CharField(required=False, allow_blank=True)
+    summary = serializers.CharField(required=False, allow_blank=True)
+    location_name = serializers.CharField(required=False, allow_blank=True)
+
+
+class WeatherRiskZoneInputSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    latitude = serializers.FloatField()
+    longitude = serializers.FloatField()
+    risk_level = serializers.CharField()
+    risk_score = serializers.FloatField()
+
+
+class WeatherIntelligenceRequestSerializer(serializers.Serializer):
+    points = WeatherPointInputSerializer(many=True, required=False)
+    watch_zones = WeatherRiskZoneInputSerializer(many=True, required=False)
+    route_path = serializers.ListField(
+        child=serializers.ListField(child=serializers.FloatField(), min_length=2, max_length=2),
+        required=False,
+    )
