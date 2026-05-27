@@ -19,6 +19,7 @@ export type WeatherContext = {
   sourceId?: string;
   label: string;
   severity: WeatherSeverity;
+  condition?: string;
   rainfallIntensity: string;
   visibility: string;
   summary: string;

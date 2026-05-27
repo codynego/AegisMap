@@ -22,28 +22,44 @@ function toNumber(value: unknown) {
 
 function overlayToWeatherContext(item: WeatherOverlayPoint | undefined): WeatherContext | null {
   if (!item) return null;
+
+  const precipitation = item.precipitationMm ?? null;
+  const visibilityKm = item.visibilityKm ?? null;
+  const code = item.weatherCode ?? null;
+
+  // Derive a human-friendly condition
+  let condition = "Unknown";
+  if (precipitation != null && precipitation >= 15) condition = "Heavy rain";
+  else if (precipitation != null && precipitation >= 1) condition = "Rain";
+  else if (code != null && [0, 1, 2, 3].includes(Number(code))) condition = "Clear / Sunny";
+  else if (code != null && Number(code) >= 80) condition = "Showers";
+  else condition = "Cloudy";
+
   return {
     label: item.label || item.title || "Weather context",
     severity: item.severity,
-    rainfallIntensity: item.precipitationMm == null
-      ? "Unknown"
-      : item.precipitationMm >= 15
-        ? "Heavy"
-        : item.precipitationMm >= 5
-          ? "Moderate"
-          : "Light",
-    visibility: item.visibilityKm == null
-      ? "Unknown"
-      : item.visibilityKm < 3
-        ? "Low"
-        : item.visibilityKm < 7
-          ? "Reduced"
-          : "Normal",
+    condition,
+    rainfallIntensity:
+      precipitation == null
+        ? "Unknown"
+        : precipitation >= 15
+          ? "Heavy"
+          : precipitation >= 5
+            ? "Moderate"
+            : "Light",
+    visibility:
+      visibilityKm == null
+        ? "Unknown"
+        : visibilityKm < 3
+          ? "Low"
+          : visibilityKm < 7
+            ? "Reduced"
+            : "Normal",
     summary: item.summary || "Weather conditions available for this point.",
     alerts: item.summary ? [item.summary] : [],
-    precipitationMm: item.precipitationMm,
-    visibilityKm: item.visibilityKm ?? null,
-    weatherCode: item.weatherCode ?? null,
+    precipitationMm: precipitation ?? undefined,
+    visibilityKm: visibilityKm ?? null,
+    weatherCode: code ?? null,
   };
 }
 
@@ -95,6 +111,7 @@ export default function AiPredictionsDemoPage() {
   const [selectedForecast, setSelectedForecast] = useState<any | null>(null);
   const [weatherContext, setWeatherContext] = useState<WeatherContext | null>(null);
   const [loadingWeather, setLoadingWeather] = useState(false);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
   const [selectedState, setSelectedState] = useState<string>("");
   const [activeHorizon, setActiveHorizon] = useState("24h");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -149,6 +166,7 @@ export default function AiPredictionsDemoPage() {
     setSelectedForecast(forecast);
     setLoadingWeather(true);
     setWeatherContext(null);
+    setWeatherError(null);
     try {
       const token = typeof window !== "undefined" ? window.localStorage.getItem("geopulse.token") : null;
       const resp = await fetch(`${API_BASE_URL}/weather-intelligence/`, {
@@ -162,9 +180,14 @@ export default function AiPredictionsDemoPage() {
       if (!resp.ok) throw new Error(`Weather request failed: ${resp.status}`);
       const data = await resp.json();
       const parsed = toWeatherIntelligenceResponse(data);
-      setWeatherContext(parsed.incidentContexts?.[0] ?? overlayToWeatherContext(parsed.overlay?.[0]) ?? null);
+      const nextContext = overlayToWeatherContext(parsed.overlay?.[0]);
+      if (!nextContext) {
+        throw new Error("Weather service returned no weather overlay for this point.");
+      }
+      setWeatherContext(nextContext);
     } catch (err: any) {
-      setWeatherContext({ label: "Weather", severity: "low", rainfallIntensity: "Unknown", visibility: "Unknown", summary: err?.message || String(err), alerts: [] });
+      setWeatherContext(null);
+      setWeatherError(err?.message || String(err));
     } finally {
       setLoadingWeather(false);
     }
@@ -178,6 +201,7 @@ export default function AiPredictionsDemoPage() {
       if (!center) return;
       setLoadingWeather(true);
       setWeatherContext(null);
+      setWeatherError(null);
       setSelectedForecast(null);
       try {
         const token = typeof window !== "undefined" ? window.localStorage.getItem("geopulse.token") : null;
@@ -192,9 +216,14 @@ export default function AiPredictionsDemoPage() {
         if (!resp.ok) throw new Error(`Weather request failed: ${resp.status}`);
         const data = await resp.json();
         const parsed = toWeatherIntelligenceResponse(data);
-        setWeatherContext(parsed.incidentContexts?.[0] ?? overlayToWeatherContext(parsed.overlay?.[0]) ?? null);
+        const nextContext = overlayToWeatherContext(parsed.overlay?.[0]);
+        if (!nextContext) {
+          throw new Error("Weather service returned no weather overlay for this state.");
+        }
+        setWeatherContext(nextContext);
       } catch (err: any) {
-        setWeatherContext({ label: "Weather", severity: "low", rainfallIntensity: "Unknown", visibility: "Unknown", summary: err?.message || String(err), alerts: [] });
+        setWeatherContext(null);
+        setWeatherError(err?.message || String(err));
       } finally {
         setLoadingWeather(false);
       }
@@ -647,7 +676,7 @@ export default function AiPredictionsDemoPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => { setSelectedForecast(null); setWeatherContext(null); }}
+                        onClick={() => { setSelectedForecast(null); setWeatherContext(null); setWeatherError(null); }}
                         className="text-white/30 hover:text-white/70 transition text-sm mt-0.5"
                       >
                         ✕
@@ -690,23 +719,46 @@ export default function AiPredictionsDemoPage() {
                   )}
 
                   {!loadingWeather && !weatherContext && (
-                    <p className="text-[11px] text-white/35 text-center py-3">Select a forecast or state to view concise weather information</p>
+                    <div className="space-y-2 text-center py-3">
+                      <p className="text-[11px] text-white/35">Select a forecast or state to view concise weather information</p>
+                      {weatherError && (
+                        <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[11px] leading-relaxed text-rose-200">
+                          {weatherError}
+                        </p>
+                      )}
+                    </div>
                   )}
 
                   {!loadingWeather && weatherContext && (
                     <div className="text-sm text-white/80 bg-white/[0.02] rounded-xl px-3 py-3 leading-relaxed">
-                      <h4 className="font-semibold text-white/90">{selectedState ? `${selectedState}` : weatherContext.label}</h4>
-                      <p className="mt-1 text-[13px] text-white/70">{weatherContext.summary || `${weatherContext.rainfallIntensity} expected; visibility: ${weatherContext.visibility}.`}</p>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="font-semibold text-white/90">{selectedState ? `${selectedState}` : weatherContext.label}</h4>
+                          <p className="mt-1 text-[13px] text-white/70">{weatherContext.summary || `${weatherContext.rainfallIntensity} expected; visibility: ${weatherContext.visibility}.`}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-white/90">{weatherContext.condition || "—"}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${weatherContext.severity === "extreme" ? "bg-rose-500 text-white" : weatherContext.severity === "high" ? "bg-orange-500 text-white" : weatherContext.severity === "moderate" ? "bg-yellow-400 text-black" : "bg-emerald-400 text-black"}`}> {weatherContext.severity ?? "low"} </span>
+                        </div>
+                      </div>
                       {weatherContext.alerts && weatherContext.alerts.length > 0 && (
                         <p className="mt-2 text-[12px] text-amber-300">Alerts: {weatherContext.alerts.join("; ")}</p>
                       )}
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <div className="rounded-lg border border-white/[0.06] bg-[#0A1020]/80 p-2">
+                          <p className="text-[9px] uppercase tracking-wider text-white/30">Condition</p>
+                          <p className="mt-1 text-xs font-semibold text-cyan-300">{weatherContext.condition}</p>
+                        </div>
+                        <div className="rounded-lg border border-white/[0.06] bg-[#0A1020]/80 p-2">
+                          <p className="text-[9px] uppercase tracking-wider text-white/30">Precipitation (mm)</p>
+                          <p className="mt-1 text-xs font-semibold text-cyan-300">{weatherContext.precipitationMm != null ? String(weatherContext.precipitationMm) : "—"}</p>
+                        </div>
+                        <div className="rounded-lg border border-white/[0.06] bg-[#0A1020]/80 p-2">
                           <p className="text-[9px] uppercase tracking-wider text-white/30">Rainfall</p>
                           <p className="mt-1 text-xs font-semibold text-cyan-300">{weatherContext.rainfallIntensity}</p>
                         </div>
                         <div className="rounded-lg border border-white/[0.06] bg-[#0A1020]/80 p-2">
-                          <p className="text-[9px] uppercase tracking-wider text-white/30">Visibility</p>
+                          <p className="text-[9px] uppercase tracking-wider text-white/30">Visibility (km)</p>
                           <p className="mt-1 text-xs font-semibold text-cyan-300">{weatherContext.visibility}</p>
                         </div>
                       </div>
