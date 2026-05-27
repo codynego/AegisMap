@@ -1,6 +1,7 @@
 from django.test import TestCase, override_settings
 from unittest.mock import patch
 
+from apps.geofences.models import Geofence
 from apps.users.models import UserRole
 
 from .models import WatchZone
@@ -292,3 +293,46 @@ class WeatherIntelligenceTests(TestCase):
         self.assertEqual(payload["route"]["segments"][0]["severity"], "high")
         self.assertEqual(payload["risk_zone_adjustments"][0]["watch_zone_id"], "2")
         self.assertGreater(payload["risk_zone_adjustments"][0]["weather_adjusted_risk_score"], 58)
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class WatchZoneCreationTests(TestCase):
+    def setUp(self):
+        register_response = self.client.post(
+            "/api/auth/register/",
+            {
+                "username": "watch_area_user",
+                "email": "watch-area@example.com",
+                "password": "strongpass123",
+            },
+        )
+        token = register_response.json()["token"]
+        self.client.defaults["HTTP_AUTHORIZATION"] = f"Token {token}"
+
+    def test_user_can_create_watch_zone_directly(self):
+        payload = {
+            "name": "Watch area · 6.4501, 5.5971",
+            "zone_type": "watch_area",
+            "status": "active",
+            "current_risk_level": "baseline",
+            "current_risk_score": 0,
+            "centroid_latitude": 6.4501,
+            "centroid_longitude": 5.5971,
+            "boundary": {},
+            "notes": "Created from a dropped pin in live intelligence.",
+            "metadata": {
+                "created_from": "live_intelligence_pin",
+                "pin_action": "watch_zone",
+                "radius_meters": 500,
+            },
+        }
+
+        response = self.client.post("/api/watch-zones/", payload, content_type="application/json")
+        self.assertEqual(response.status_code, 201)
+
+        watch_zone = WatchZone.objects.get(name=payload["name"])
+        self.assertEqual(watch_zone.zone_type, "watch_area")
+        self.assertEqual(watch_zone.status, "active")
+        self.assertEqual(watch_zone.metadata.get("created_from"), "live_intelligence_pin")
+        self.assertEqual(watch_zone.metadata.get("pin_action"), "watch_zone")
+        self.assertFalse(Geofence.objects.filter(name=payload["name"]).exists())

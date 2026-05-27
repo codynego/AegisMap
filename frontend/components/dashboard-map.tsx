@@ -209,6 +209,7 @@ type DashboardMapProps = {
   onExactPinChange?: (value: ExactPin | null) => void;
   onFocusChange?: (value: { latitude: number; longitude: number } | null) => void;
   onMapClick?: (coords: { latitude: number; longitude: number }) => void;
+  onMapHoverChange?: (value: { latitude: number; longitude: number; clientX: number; clientY: number } | null) => void;
   onPinActionSelect?: (action: PinAction, pin: ExactPin, payload?: PinActionPayload) => void;
   onDroppedPinSelect?: (pin: DroppedPinPoint) => void;
   controlsTargetId?: string;
@@ -586,6 +587,7 @@ export function DashboardMap({
   onExactPinChange,
   onFocusChange,
   onMapClick,
+  onMapHoverChange,
   onPinActionSelect,
   onDroppedPinSelect,
   controlsTargetId,
@@ -794,10 +796,25 @@ export function DashboardMap({
       setStatusMsg("Pin dropped. Choose the next action for this location.");
     };
 
+    const onMouseMove = (e: mapboxgl.MapMouseEvent) => {
+      onMapHoverChange?.({
+        latitude: e.lngLat.lat,
+        longitude: e.lngLat.lng,
+        clientX: e.originalEvent?.clientX ?? 0,
+        clientY: e.originalEvent?.clientY ?? 0,
+      });
+    };
+
+    const onMouseLeave = () => {
+      onMapHoverChange?.(null);
+    };
+
     map.on("load", onLoad);
     map.on("style.load", onLoad);
     map.on("zoomend", onZoomEnd);
     map.on("click", onClick);
+    map.on("mousemove", onMouseMove);
+    map.on("mouseleave", onMouseLeave);
     map.on("error", (e) => setStatusMsg(e.error?.message ?? "Map error."));
 
     return () => {

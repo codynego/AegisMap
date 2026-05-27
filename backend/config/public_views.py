@@ -18,48 +18,27 @@ PUBLIC_INCIDENT_TYPES = {
     IncidentType.UNSAFE_ROUTE,
     IncidentType.FIRE_OUTBREAK,
 }
+
 PUBLIC_INCIDENT_STATUSES = {
     IncidentStatus.VERIFIED,
     IncidentStatus.ACTIVE,
     IncidentStatus.RESOLVED,
 }
-PUBLIC_CONFIDENCE_LEVELS = {"corroborated", "high"}
-PUBLIC_ALERT_SEVERITIES = {"medium", "high", "critical"}
-PUBLIC_ALERT_STATUSES = {"active", "acknowledged", "resolved"}
-
-
-def _round_coordinate(value, digits=1):
-    if value in {None, ""}:
-        return None
+# For public views we require at least `probable` tier (visibility_score >= 0.6)
+def _confidence_tier_from_visibility(score: float) -> str:
     try:
-        return round(float(value), digits)
-    except (TypeError, ValueError):
-        return None
+        if isinstance(score, (int, float)):
+            if score >= 0.8:
+                return "verified"
+            if score >= 0.6:
+                return "probable"
+            if score >= 0.3:
+                return "emerging"
+    except Exception:
+        pass
+    return "raw"
 
 
-def _location_state_for_incident(incident: Incident) -> str:
-    metadata = incident.metadata or {}
-    signal_metadata = getattr(getattr(incident, "primary_signal", None), "metadata", {}) or {}
-    return (
-        metadata.get("location_state")
-        or signal_metadata.get("location_state")
-        or ""
-    )
-
-
-
-    def _confidence_tier_from_visibility(score: float) -> str:
-        try:
-            if isinstance(score, (int, float)):
-                if score >= 0.8:
-                    return "verified"
-                if score >= 0.6:
-                    return "probable"
-                if score >= 0.3:
-                    return "emerging"
-        except Exception:
-            pass
-        return "raw"
 def _public_location_label(state: str, fallback: str = "") -> str:
     if state:
         return f"{state} area"
@@ -76,21 +55,28 @@ def _serialize_public_incident(incident: Incident) -> dict:
         "title": incident.title,
         "incident_type": incident.incident_type,
         "severity": incident.severity,
-            "visibility_score": visibility_score,
-            "confidence_tier": _confidence_tier_from_visibility(visibility_score),
+        "confidence_tier": _confidence_tier_from_visibility(visibility_score),
+        "visibility_score": visibility_score,
         "location_name": _public_location_label(state, incident.location_name),
         "location_state": state,
         "latitude": _round_coordinate(incident.latitude, 1),
         "longitude": _round_coordinate(incident.longitude, 1),
         "detected_at": incident.detected_at,
         "summary": incident.summary,
-        "visibility_score": visibility_score,
     }
 
 
 def _serialize_public_alert(alert: Alert) -> dict:
     metadata = alert.metadata or {}
     state = metadata.get("location_state") or ""
+    incident = getattr(alert, "incident", None)
+    incident_confidence = None
+    if incident is not None:
+        try:
+            incident_confidence = _confidence_tier_from_visibility(calculate_incident_visibility_score(incident))
+        except Exception:
+            incident_confidence = None
+
     return {
         "id": alert.pk,
         "severity": alert.severity,
@@ -100,17 +86,17 @@ def _serialize_public_alert(alert: Alert) -> dict:
         "location_name": _public_location_label(state, metadata.get("location_name", "")),
         "location_state": state,
         "location_latitude": _round_coordinate(
-            metadata.get("location_latitude")
-            or getattr(getattr(alert, "incident", None), "latitude", None),
+            metadata.get("location_latitude") or (incident.latitude if incident is not None else None),
             1,
         ),
         "location_longitude": _round_coordinate(
-            metadata.get("location_longitude")
-            or getattr(getattr(alert, "incident", None), "longitude", None),
+            metadata.get("location_longitude") or (incident.longitude if incident is not None else None),
             1,
         ),
         "triggered_at": alert.triggered_at,
+        "incident_confidence_tier": incident_confidence,
     }
+    
 
 
 def _route_label_for_incident(incident: Incident) -> str:
@@ -142,12 +128,11 @@ class PublicSafetySummaryView(APIView):
 
         incidents = (
             Incident.objects.select_related("primary_signal")
-            .filter(
-                incident_type__in=PUBLIC_INCIDENT_TYPES,
-                status__in=PUBLIC_INCIDENT_STATUSES,
-                confidence__in=PUBLIC_CONFIDENCE_LEVELS,
-            )
-            .order_by("-detected_at")
+                .filter(
+                    incident_type__in=PUBLIC_INCIDENT_TYPES,
+                    status__in=PUBLIC_INCIDENT_STATUSES,
+                )
+                .order_by("-detected_at")
         )
         if state:
             incidents = incidents.filter(
@@ -155,11 +140,17 @@ class PublicSafetySummaryView(APIView):
                 | Q(primary_signal__metadata__location_state__iexact=state)
             )
 
-        safe_incidents = [
-            incident
-            for incident in incidents
-            if should_display_incident_on_map(incident) and not (incident.metadata or {}).get("hidden_from_map")
-        ]
+        # Compute visibility and tier per-incident and filter to public tiers
+        safe_incidents = []
+        for incident in incidents:
+            if (incident.metadata or {}).get("hidden_from_map"):
+                continue
+            if not should_display_incident_on_map(incident):
+                continue
+            visibility_score = calculate_incident_visibility_score(incident)
+            tier = _confidence_tier_from_visibility(visibility_score)
+            if tier in PUBLIC_CONFIDENCE_TIERS:
+                safe_incidents.append(incident)
 
         alerts = (
             Alert.objects.select_related("incident")

@@ -46,10 +46,26 @@ type IncidentRecord = {
 type WatchZoneRecord = {
   id: number;
   name: string;
+  zone_type?: string;
   current_risk_level: string;
   current_risk_score: number | string | null;
   centroid_latitude: number | string | null;
   centroid_longitude: number | string | null;
+  metadata?: {
+    created_from?: string;
+    pin_action?: string;
+    location_state?: string;
+  };
+};
+
+type WatchAreaItem = {
+  id: number;
+  name: string;
+  displayLabel: string;
+  coordinateLabel: string;
+  state: string;
+  distanceKm: number;
+  sourceLabel: string;
 };
 
 type ApiListResponse<T> = { results?: T[] };
@@ -545,6 +561,44 @@ export default function DashboardPage() {
       .slice(0, 4);
   }, [anchor, currentArea.state, position, watchZones]);
 
+  const nearbyWatchAreas = useMemo<WatchAreaItem[]>(() => {
+    const isUserCreatedWatchZone = (area: WatchZoneRecord) =>
+      area.metadata?.created_from === "live_intelligence_pin" && area.metadata?.pin_action === "watch_zone";
+
+    const exactLabel = (area: WatchZoneRecord) => {
+      const lat = toNum(area.centroid_latitude);
+      const lng = toNum(area.centroid_longitude);
+      if (isUserCreatedWatchZone(area) && lat !== null && lng !== null) {
+        return area.name?.trim() || `${resolveNearestHub(lat, lng).label}, ${resolveNearestHub(lat, lng).state}`;
+      }
+      return area.name;
+    };
+
+    return watchZones
+      .flatMap((area) => {
+        const lat = toNum(area.centroid_latitude);
+        const lng = toNum(area.centroid_longitude);
+        if (!isUserCreatedWatchZone(area)) return [];
+        const sourceLabel = "User-defined";
+        const state = area.metadata?.location_state || (lat !== null && lng !== null ? stateForCoordinates(lat, lng) : "Active");
+        return [{
+          id: area.id,
+          name: area.name,
+          displayLabel: exactLabel(area),
+          coordinateLabel: lat !== null && lng !== null ? `${lat.toFixed(4)}, ${lng.toFixed(4)}` : "",
+          state,
+          distanceKm: position && lat !== null && lng !== null ? haversineKm(anchor.latitude, anchor.longitude, lat, lng) : 0,
+          sourceLabel,
+        }];
+      })
+      .sort((a, b) => {
+        if (a.sourceLabel !== b.sourceLabel) return a.sourceLabel === "User-defined" ? -1 : 1;
+        if (a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 6);
+  }, [anchor, position, watchZones]);
+
   const stateAlerts = useMemo(
     () => {
       if (!position) return [];
@@ -801,6 +855,39 @@ export default function DashboardPage() {
                 ) : (
                   <div className="rounded-xl border border-dashed border-white/[0.08] p-3 text-center text-xs text-white/30">
                     No active risk zones nearby
+                  </div>
+                )}
+              </div>
+
+              <div className="min-w-0 rounded-3xl border border-white/[0.06] bg-[#08101F]/90 p-3 sm:p-5">
+                <div className="mb-2 sm:mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[9px] sm:text-[10px] uppercase tracking-widest text-cyan-300/60">Watch areas</p>
+                    <h2 className="mt-0.5 text-sm sm:text-base font-semibold text-white">User-defined watch areas</h2>
+                  </div>
+                  <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] text-cyan-200">
+                    {nearbyWatchAreas.length} active
+                  </span>
+                </div>
+
+                {nearbyWatchAreas.length > 0 ? (
+                  <div className="space-y-1 sm:space-y-2">
+                    {nearbyWatchAreas.map((area) => (
+                      <div key={area.id} className="flex min-w-0 items-center justify-between gap-1.5 overflow-hidden rounded-xl border border-cyan-500/15 bg-cyan-500/5 px-2 py-2 sm:gap-3 sm:px-3.5 sm:py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs sm:text-sm font-semibold text-white">{area.displayLabel}</p>
+                          <p className="text-[8px] sm:text-[11px] text-white/35 truncate">{area.coordinateLabel}</p>
+                          <p className="text-[8px] sm:text-[11px] text-white/25 truncate">{area.distanceKm.toFixed(1)}km · {area.state}</p>
+                        </div>
+                        <span className="flex-shrink-0 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-1 sm:px-2 py-0.5 text-[8px] sm:text-[10px] uppercase tracking-wider whitespace-nowrap text-cyan-200">
+                          {area.sourceLabel}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-white/[0.08] p-3 text-center text-xs text-white/30">
+                    No active watch areas nearby
                   </div>
                 )}
               </div>

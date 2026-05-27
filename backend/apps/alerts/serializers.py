@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.users.permissions import is_analyst_or_admin
 
 from .models import Alert, AlertRule
+from apps.incidents.serializers import IncidentSerializer
 
 
 def _metadata_value(instance, key, fallback=None):
@@ -38,6 +39,7 @@ class AlertSerializer(serializers.ModelSerializer):
     location_state = serializers.SerializerMethodField()
     location_latitude = serializers.SerializerMethodField()
     location_longitude = serializers.SerializerMethodField()
+    incident_preview = serializers.SerializerMethodField()
 
     class Meta:
         model = Alert
@@ -61,6 +63,7 @@ class AlertSerializer(serializers.ModelSerializer):
             "triggered_at",
             "acknowledged_at",
             "resolved_at",
+            "incident_preview",
         ]
         read_only_fields = ["id", "triggered_at"]
 
@@ -121,5 +124,13 @@ class AlertSerializer(serializers.ModelSerializer):
             "triggered_at",
             "acknowledged_at",
             "resolved_at",
+            "incident_preview",
         }
         return {key: value for key, value in data.items() if key in allowed_fields}
+
+    def get_incident_preview(self, instance):
+        incident = getattr(instance, "incident", None)
+        if incident is None:
+            return None
+        # Use IncidentSerializer which already exposes `confidence_tier` and redacts metadata for non-analysts
+        return IncidentSerializer(incident, context=self.context).data

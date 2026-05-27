@@ -156,6 +156,8 @@ FORECAST_CATEGORY_NIGHTTIME_RISK = "nighttime_risk"
 FORECAST_CATEGORY_ROUTE_INSTABILITY = "route_instability"
 FORECAST_CATEGORY_UNUSUAL_ACTIVITY_SPIKE = "unusual_activity_spike"
 FORECAST_CATEGORY_RISK_SPILLOVER = "risk_spillover"
+FORECAST_CATEGORY_HEAVY_RAIN_RISK = "heavy_rain_risk"
+FORECAST_CATEGORY_FLOOD_RISK = "flood_risk"
 
 
 def _to_float(value) -> float | None:
@@ -226,6 +228,10 @@ def _prediction_summary(category: str, cluster_name: str, window: str) -> str:
         return f"This corridor is showing repeated instability patterns that may worsen within {window}."
     if category == FORECAST_CATEGORY_UNUSUAL_ACTIVITY_SPIKE:
         return f"A sudden activity spike has appeared near {cluster_name} and merits monitoring."
+    if category == FORECAST_CATEGORY_HEAVY_RAIN_RISK:
+        return f"Weather data suggests heavy rainfall may affect {cluster_name} within {window}."
+    if category == FORECAST_CATEGORY_FLOOD_RISK:
+        return f"Flood risk is increasing around {cluster_name} due to rainfall patterns and recent incident history within {window}."
     return f"Risk may spread from nearby active zones toward {cluster_name} within {window}."
 
 
@@ -298,7 +304,48 @@ def _find_nearest_zone(incident: dict, watch_zones: list[dict], max_distance_km:
     return {"zone": best, "distance_km": min_distance}
 
 
-def build_risk_forecasts() -> list[dict]:
+def _incident_points_for_weather_forecast(clusters: dict[str, dict]) -> list[dict]:
+    points = []
+    for cluster_key, cluster in clusters.items():
+        points.append(
+            {
+                "id": cluster_key,
+                "latitude": cluster["latitude"],
+                "longitude": cluster["longitude"],
+                "label": cluster["name"],
+                "kind": "prediction",
+            }
+        )
+    return points
+
+
+def _incident_mentions_flood_or_rain(incident: dict) -> bool:
+    haystack = " ".join(
+        str(part or "").lower()
+        for part in [incident.get("incident_type"), incident.get("location_name"), incident.get("summary")]
+    )
+    return any(keyword in haystack for keyword in ["flood", "rain", "storm", "drain", "bridge", "water", "road_obstruction"])
+
+
+def _state_matches_request(requested_state: str, candidate_state: str, candidate_label: str = "") -> bool:
+    requested = (requested_state or "").strip().lower()
+    if not requested:
+        return True
+
+    candidate_state_normalized = (candidate_state or "").strip().lower()
+    candidate_label_normalized = (candidate_label or "").strip().lower()
+    aliases = {requested}
+    if requested == "fct":
+        aliases.update({"fct", "fct abuja", "abuja"})
+    if requested == "fct abuja":
+        aliases.update({"fct", "fct abuja", "abuja"})
+    if requested == "abuja":
+        aliases.update({"fct", "fct abuja", "abuja"})
+
+    return candidate_state_normalized in aliases or any(alias in candidate_label_normalized for alias in aliases)
+
+
+def build_risk_forecasts(state: str | None = None) -> list[dict]:
     incidents = _build_signal_points()
     watch_zones = _build_watch_zone_points()
     clusters: dict[str, dict] = {}
@@ -329,6 +376,22 @@ def build_risk_forecasts() -> list[dict]:
             or "corridor" in location_name
         ):
             cluster["route_tagged_count"] += 1
+
+    if state:
+        filtered_clusters: dict[str, dict] = {}
+        for cluster_key, cluster in clusters.items():
+            resolved = resolve_nigeria_state(cluster["latitude"], cluster["longitude"])
+            if _state_matches_request(state, resolved.get("state", ""), cluster["name"]):
+                filtered_clusters[cluster_key] = cluster
+        clusters = filtered_clusters
+
+    weather_rows: list[dict] = []
+    weather_lookup: dict[str, dict] = {}
+    try:
+        weather_rows = _fetch_weather_rows(_incident_points_for_weather_forecast(clusters))
+        weather_lookup = {row["id"]: row for row in weather_rows}
+    except Exception:
+        weather_lookup = {}
 
     now = timezone.now().timestamp()
     seventy_two_hours_ago = now - 72 * 60 * 60
@@ -362,6 +425,14 @@ def build_risk_forecasts() -> list[dict]:
         anomaly_signal = 1 if len(previous) == 0 and len(recent) >= 2 else _clamp((len(recent) - len(previous)) / 5, 0, 1)
         growth = len(recent) / max(len(previous), 1)
         zone_support = ((cluster["anchor_zone"] or {}).get("risk_score", 0)) / 100
+        weather_row = weather_lookup.get(cluster_key)
+        precipitation_mm = float(weather_row["precipitation_mm"]) if weather_row else 0.0
+        visibility_m = weather_row["visibility_m"] if weather_row else None
+        weather_code = weather_row["weather_code"] if weather_row else None
+        weather_severity = _weather_severity(precipitation_mm, visibility_m, weather_code)
+        flood_like_history = sum(1 for incident in cluster["incidents"] if _incident_mentions_flood_or_rain(incident))
+        heavy_rain_signal = precipitation_mm * 4 + (12 if weather_severity in {"high", "extreme"} else 0)
+        flood_signal = heavy_rain_signal + flood_like_history * 8 + (8 if cluster["route_tagged_count"] >= 2 else 0)
 
         escalation_signal = ((high_severity_count / len(recent)) * 18 + growth * 10 + active_reports * 4) if recent else 0
         hotspot_score = len(recent) * 8 + len(short_term) * 5 + growth * 8
@@ -378,6 +449,8 @@ def build_risk_forecasts() -> list[dict]:
             (FORECAST_CATEGORY_ROUTE_INSTABILITY, route_score),
             (FORECAST_CATEGORY_UNUSUAL_ACTIVITY_SPIKE, unusual_score),
             (FORECAST_CATEGORY_RISK_SPILLOVER, spillover_score),
+            (FORECAST_CATEGORY_HEAVY_RAIN_RISK, heavy_rain_signal),
+            (FORECAST_CATEGORY_FLOOD_RISK, flood_signal),
         ]
         category, top_category_score = max(category_scores, key=lambda item: item[1])
 
@@ -392,6 +465,9 @@ def build_risk_forecasts() -> list[dict]:
                     + active_reports * 3
                     + zone_support * 20
                     + route_signal * 12
+                    + min(22, precipitation_mm * 2.5)
+                    + (8 if weather_severity in {"high", "extreme"} else 0)
+                    + min(12, flood_like_history * 3)
                 ),
                 24,
                 94,
@@ -432,6 +508,14 @@ def build_risk_forecasts() -> list[dict]:
             rationale.append(
                 f"Existing watch-zone pressure around {cluster['anchor_zone']['name']} corroborates the forecast."
             )
+        if weather_row:
+            rationale.append(
+                f"Weather API indicates { _rainfall_intensity_label(precipitation_mm).lower() } rainfall and { _visibility_label(visibility_m).lower() } visibility at this location."
+            )
+            if flood_like_history > 0:
+                rationale.append(
+                    f"{flood_like_history} prior incident{'s' if flood_like_history != 1 else ''} suggest this area is vulnerable to water-related disruption when rain increases."
+                )
 
         forecast = {
             "id": cluster_key,
@@ -460,6 +544,11 @@ def build_risk_forecasts() -> list[dict]:
             "night_share": round(night_share, 4),
             "route_signal": round(route_signal, 4),
             "anomaly_signal": round(anomaly_signal, 4),
+            "weather_severity": weather_severity,
+            "precipitation_mm": round(precipitation_mm, 2),
+            "visibility_m": visibility_m,
+            "weather_code": weather_code,
+            "flood_like_history": flood_like_history,
         }
         if forecast["recent_count"] >= 2 or forecast["probability"] >= 58:
             forecasts.append(forecast)

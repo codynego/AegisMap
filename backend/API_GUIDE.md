@@ -65,6 +65,33 @@ Authentication:
 
 - `GET /api/risk-forecasts/`
 
+#### Risk Forecasts
+
+- `GET /api/risk-forecasts/` — Returns a short list of pattern-based risk forecasts computed from recent signals, incidents, and watch-zone context.
+	- Query params:
+		- `limit` (int) — maximum number of forecasts to return (default: 12)
+		- `category` (string) — filter by forecast category (e.g., `emerging_hotspot`)
+		- `min_confidence` (int) — filter forecasts with `confidence` >= value (0-100)
+		- `latitude`, `longitude`, `radius_km` — optional geographic filter around a center point
+	- Response: JSON array of forecasts with fields:
+		- `id`, `cluster_name`, `category`, `level`, `probability` (0-100), `confidence` (0-100), `window`, `latitude`, `longitude`, `summary`, `rationale`, `timing_note`, and additional metadata.
+
+#### Weather Intelligence
+
+- `POST /api/weather-intelligence/` — Query weather-based context for a set of points, watch zones, or a route path.
+	- Payload example:
+
+```json
+{
+	"points": [{ "latitude": 9.0579, "longitude": 7.4898 }],
+	"watch_zones": [],
+	"route_path": []
+}
+```
+
+	- Response: JSON object containing `overlays`, `incident_contexts`, `alerts`, and `route` information suitable for rendering weather overlays and advisories.
+	- Notes: This endpoint calls an external weather provider configured via `WEATHER_INTELLIGENCE_BASE_URL` and may return 503 if the provider is unavailable.
+
 ### Alerts
 
 - `POST /api/alerts/{id}/acknowledge/`

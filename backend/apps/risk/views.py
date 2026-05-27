@@ -9,6 +9,7 @@ from apps.audit_logs.services import record_audit_event
 from apps.users.permissions import (
     IsAnalystOrAdmin,
     IsAuthenticatedCreateReadAnalystWrite,
+    AllowCreateAuthenticatedReadAnalystWrite,
     IsAuthenticatedReadAnalystWrite,
 )
 
@@ -24,7 +25,7 @@ from .services import _haversine, build_risk_forecasts, build_weather_intelligen
 
 class WatchZoneViewSet(viewsets.ModelViewSet):
     serializer_class = WatchZoneSerializer
-    permission_classes = [IsAuthenticatedReadAnalystWrite]
+    permission_classes = [AllowCreateAuthenticatedReadAnalystWrite]
     queryset = WatchZone.objects.prefetch_related("snapshots")
 
     def get_queryset(self):
@@ -75,7 +76,8 @@ class RiskForecastViewSet(viewsets.ViewSet):
     permission_classes = [IsAnalystOrAdmin]
 
     def list(self, request):
-        forecasts = build_risk_forecasts()
+        state = request.query_params.get("state")
+        forecasts = build_risk_forecasts(state=state)
         category = request.query_params.get("category")
         min_confidence = request.query_params.get("min_confidence")
         limit = request.query_params.get("limit")

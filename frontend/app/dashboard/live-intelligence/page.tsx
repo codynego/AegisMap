@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { getCurrentRole } from "@/lib/access";
-import { stateForCoordinates } from "@/lib/user-location";
+import { reverseGeocodeLocation } from "@/lib/location-search";
+import { resolveNearestHub, stateForCoordinates } from "@/lib/user-location";
 import {
   mapIncidentWeatherContexts,
   mapRiskZoneAdjustments,
@@ -57,7 +58,9 @@ type WatchZoneRecord = {
   current_risk_score: number | string | null;
   centroid_latitude: number | string | null;
   centroid_longitude: number | string | null;
-  metadata?: { location_state?: string };
+  status?: string;
+  zone_type?: string;
+  metadata?: { location_state?: string; created_from?: string; pin_action?: string };
 };
 
 type GeofenceRecord = {
@@ -70,6 +73,13 @@ type GeofenceRecord = {
   radius_meters: number | string | null;
   description: string;
   metadata?: Record<string, unknown> & { location_state?: string };
+};
+
+type MapHoverPreview = {
+  latitude: number;
+  longitude: number;
+  clientX: number;
+  clientY: number;
 };
 
 type ApiListResponse<T> = { results?: T[] };
@@ -94,6 +104,8 @@ type DroppedPin = {
   latitude: number;
   longitude: number;
   label: string;
+  locationName: string;
+  coordinateLabel: string;
   action: PinAction;
   note?: string;
   radiusMeters?: number;
@@ -256,6 +268,11 @@ function formatPinLabel(latitude: number, longitude: number) {
   return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
 }
 
+function formatPinLocationName(latitude: number, longitude: number) {
+  const nearestHub = resolveNearestHub(latitude, longitude);
+  return `${nearestHub.label}, ${nearestHub.state}`;
+}
+
 function toBackendCoordinate(value: number) {
   return Number(value.toFixed(6));
 }
@@ -289,6 +306,20 @@ function toIncidentRecord(payload: Record<string, unknown>): IncidentRecord {
     visibility_score:
       typeof payload.visibility_score === "number" ? payload.visibility_score : undefined,
     metadata: (payload.metadata as { location_state?: string } | undefined) ?? undefined,
+  };
+}
+
+function toWatchZoneRecord(payload: Record<string, unknown>): WatchZoneRecord {
+  return {
+    id: Number(payload.id ?? Date.now()),
+    name: String(payload.name ?? "Untitled watch zone"),
+    zone_type: String(payload.zone_type ?? "watch_area"),
+    status: String(payload.status ?? "active"),
+    current_risk_level: String(payload.current_risk_level ?? "baseline"),
+    current_risk_score: payload.current_risk_score as number | string | null,
+    centroid_latitude: payload.centroid_latitude as number | string | null,
+    centroid_longitude: payload.centroid_longitude as number | string | null,
+    metadata: (payload.metadata as { location_state?: string; created_from?: string; pin_action?: string } | undefined) ?? undefined,
   };
 }
 
@@ -542,7 +573,8 @@ function PinDetailPanel({
             <p className="font-mono text-[10px] uppercase tracking-[0.18em]" style={{ color: actionDef.color }}>
               {actionDef.label}
             </p>
-            <h2 className="mt-0.5 text-sm font-bold text-white">{pin.label}</h2>
+            <h2 className="mt-0.5 text-sm font-bold text-white">{pin.locationName}</h2>
+            <p className="mt-0.5 font-mono text-[10px] text-white/40">{pin.coordinateLabel}</p>
           </div>
         </div>
       </div>
@@ -839,8 +871,11 @@ function DroppedPinsList({
                     </span>
                   )}
                 </div>
+                <p className="mt-0.5 text-[10px] text-white/28">
+                  {pin.locationName}
+                </p>
                 <p className="mt-0.5 font-mono text-[10px] text-white/40">
-                  {pin.latitude.toFixed(4)}, {pin.longitude.toFixed(4)}
+                  {pin.coordinateLabel}
                 </p>
                 <p className="mt-0.5 text-[10px] text-white/25">{relativeTime(pin.createdAt)}</p>
               </div>
@@ -1105,6 +1140,8 @@ export default function LiveIntelligencePage() {
   const [zoom, setZoom] = useState(3);
   const [mapStyle, setMapStyle] = useState("mapbox://styles/mapbox/dark-v11");
   const [mapFocus, setMapFocus] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [mapHoverPreview, setMapHoverPreview] = useState<MapHoverPreview | null>(null);
+  const [mapHoverLabel, setMapHoverLabel] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [exactPin, setExactPin] = useState<ExactPin | null>(null);
@@ -1120,6 +1157,34 @@ export default function LiveIntelligencePage() {
   // Selection
   const [selectedIncident, setSelectedIncident] = useState<SelectedIncident | null>(null);
   const [rightMode, setRightMode] = useState<RightMode>("controls");
+  const hoverPreviewRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (!mapHoverPreview) {
+      setMapHoverLabel(null);
+      return;
+    }
+
+    const requestId = ++hoverPreviewRequestRef.current;
+    const fallback = resolveNearestHub(mapHoverPreview.latitude, mapHoverPreview.longitude);
+    setMapHoverLabel(`${fallback.label}, ${fallback.state}`);
+
+    const timer = window.setTimeout(() => {
+      reverseGeocodeLocation(mapHoverPreview.latitude, mapHoverPreview.longitude)
+        .then((result) => {
+          if (hoverPreviewRequestRef.current !== requestId) return;
+          const label = result.label.trim();
+          setMapHoverLabel(label || `${fallback.label}, ${fallback.state}`);
+        })
+        .catch(() => {
+          if (hoverPreviewRequestRef.current === requestId) {
+            setMapHoverLabel(`${fallback.label}, ${fallback.state}`);
+          }
+        });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [mapHoverPreview]);
 
   // Panel tab (feed / filter) — shared between desktop sidebar and mobile sheet
   const [panelTab, setPanelTab] = useState<PanelTab>("feed");
@@ -1465,7 +1530,9 @@ export default function LiveIntelligencePage() {
           id: `incident-pin-${incident.id}`,
           latitude,
           longitude,
-          label: incident.title || `${pinConfig.label} · ${formatPinLabel(latitude, longitude)}`,
+          label: incident.title || `${pinConfig.label} · ${formatPinLocationName(latitude, longitude)}`,
+          locationName: formatPinLocationName(latitude, longitude),
+          coordinateLabel: formatPinLabel(latitude, longitude),
           action,
           note: incident.summary || undefined,
           createdAt: incident.detected_at || incident.created_at || new Date().toISOString(),
@@ -1492,7 +1559,9 @@ export default function LiveIntelligencePage() {
           id: `geofence-pin-${geofence.id}`,
           latitude,
           longitude,
-          label: geofence.name || `${pinConfig.label} · ${formatPinLabel(latitude, longitude)}`,
+          label: geofence.name || `${pinConfig.label} · ${formatPinLocationName(latitude, longitude)}`,
+          locationName: formatPinLocationName(latitude, longitude),
+          coordinateLabel: formatPinLabel(latitude, longitude),
           action,
           note: geofence.description || undefined,
           radiusMeters: toNumber(geofence.radius_meters) ?? undefined,
@@ -1558,7 +1627,9 @@ export default function LiveIntelligencePage() {
         id: generatePinId(),
         latitude: pin.latitude,
         longitude: pin.longitude,
-        label: `${def.label} · ${pin.latitude.toFixed(3)}, ${pin.longitude.toFixed(3)}`,
+        label: `${def.label} · ${formatPinLocationName(pin.latitude, pin.longitude)}`,
+        locationName: formatPinLocationName(pin.latitude, pin.longitude),
+        coordinateLabel: formatPinLabel(pin.latitude, pin.longitude),
         action: normalizedAction,
         radiusMeters: normalizedAction === "watch_zone" ? 500 : normalizedAction === "save_location" ? 100 : undefined,
         createdAt: new Date().toISOString(),
@@ -1568,25 +1639,25 @@ export default function LiveIntelligencePage() {
       try {
         if (normalizedAction === "watch_zone") {
           if (!authToken) throw new Error("You need to sign in before creating a watch area.");
-          const response = await fetch(`${API_BASE_URL}/geofences/`, {
+          const response = await fetch(`${API_BASE_URL}/watch-zones/`, {
             method: "POST",
             headers: buildAuthHeaders(authToken),
             body: JSON.stringify({
-              name: `Watch area · ${formatPinLabel(pin.latitude, pin.longitude)}`,
-              geofence_type: "custom",
+              name: formatPinLocationName(pin.latitude, pin.longitude),
               status: "active",
+              zone_type: "watch_area",
+              current_risk_level: "baseline",
+              current_risk_score: 0,
               centroid_latitude: apiLatitude,
               centroid_longitude: apiLongitude,
-              radius_meters: 500,
-              description: "Created from a dropped pin in live intelligence.",
-              notify_on_signal: true,
-              notify_on_incident: true,
+              boundary: {},
+              notes: `Created from a dropped pin in live intelligence at ${formatPinLabel(pin.latitude, pin.longitude)}.`,
               metadata: { created_from: "live_intelligence_pin", pin_action: normalizedAction, radius_meters: 500 },
             }),
           });
           if (!response.ok) { const t = await response.text(); throw new Error(t || "Unable to create the watch area right now."); }
           const responsePayload = (await response.json()) as Record<string, unknown>;
-          setGeofences((prev) => [toGeofenceRecord(responsePayload), ...prev]);
+          setWatchZones((prev) => [toWatchZoneRecord(responsePayload), ...prev]);
         }
 
         if (normalizedAction === "mark_hazard") {
@@ -1981,6 +2052,7 @@ export default function LiveIntelligencePage() {
               onStreetChange={setSelectedStreet}
               onZoomChange={setZoom}
               onFocusChange={setMapFocus}
+              onMapHoverChange={setMapHoverPreview}
               onPinActionSelect={handlePinActionSelect}
               onIncidentSelect={(inc) => {
                 setSelectedIncident(inc);
@@ -2002,6 +2074,21 @@ export default function LiveIntelligencePage() {
               mobileFeedPanel={feedPanelContent}
               weatherOverlay={weatherOverlayPoints}
             />
+
+            {mapHoverPreview && mapHoverLabel ? (
+              <div
+                className="pointer-events-none fixed z-40 max-w-[240px] rounded-2xl border border-white/10 bg-[#08101d]/95 px-3 py-2 text-left shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-md"
+                style={{ left: mapHoverPreview.clientX + 14, top: mapHoverPreview.clientY + 14 }}
+              >
+                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/80">
+                  Location preview
+                </div>
+                <div className="mt-1 text-sm font-semibold text-white">{mapHoverLabel}</div>
+                <div className="mt-1 font-mono text-[11px] text-white/45">
+                  {formatPinLabel(mapHoverPreview.latitude, mapHoverPreview.longitude)}
+                </div>
+              </div>
+            ) : null}
 
             {/* Metrics overlay */}
             <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 p-1.5 sm:p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:pb-3">
