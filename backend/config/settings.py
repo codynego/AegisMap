@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'apps.alerts',
     'apps.geofences',
     'apps.media_assets',
+    'apps.user_preferences',
 ]
 
 if DATABASE_BACKEND == "postgis":
