@@ -17,6 +17,7 @@ export type NavItem = {
 
 export const INTERNAL_NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", path: "/dashboard" },
+  { label: "Watch Area", path: "/watch-area" },
   { label: "Live Intelligence", path: "/dashboard/live-intelligence" },
   { label: "Incident Reports", path: "/dashboard/incident-reports" },
   { label: "Route Intelligence", path: "/dashboard/route-intelligence" },
@@ -77,6 +78,7 @@ export function getPublicNavItems(role: AppRole): NavItem[] {
   // Keep ordering consistent with product spec.
   const userItems: NavItem[] = [
     { label: "Home", path: "/dashboard" },
+    { label: "Watch Area", path: "/watch-area" },
     { label: "Map", path: "/dashboard/live-intelligence" },
     { label: "Report", path: "/dashboard/incident-reports" },
     { label: "Routes", path: "/dashboard/route-intelligence" },

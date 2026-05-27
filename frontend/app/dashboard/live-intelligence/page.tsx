@@ -1159,6 +1159,15 @@ export default function LiveIntelligencePage() {
   const [rightMode, setRightMode] = useState<RightMode>("controls");
   const hoverPreviewRequestRef = useRef(0);
 
+  const deepLinkedWatchArea = useMemo(() => {
+    const latitude = Number(searchParams.get("watch_area_lat"));
+    const longitude = Number(searchParams.get("watch_area_lng"));
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    const state = searchParams.get("watch_area_state")?.trim() || stateForCoordinates(latitude, longitude);
+    const label = searchParams.get("watch_area_label")?.trim() || formatPinLocationName(latitude, longitude);
+    return { latitude, longitude, state, label };
+  }, [searchParams]);
+
   useEffect(() => {
     if (!mapHoverPreview) {
       setMapHoverLabel(null);
@@ -1185,6 +1194,20 @@ export default function LiveIntelligencePage() {
 
     return () => window.clearTimeout(timer);
   }, [mapHoverPreview]);
+
+  useEffect(() => {
+    if (!deepLinkedWatchArea) return;
+    setSelectedState(deepLinkedWatchArea.state);
+    setSelectedCity("");
+    setSelectedStreet("");
+    setMapFocus({ latitude: deepLinkedWatchArea.latitude, longitude: deepLinkedWatchArea.longitude });
+    setExactPin({
+      latitude: deepLinkedWatchArea.latitude,
+      longitude: deepLinkedWatchArea.longitude,
+      label: deepLinkedWatchArea.label,
+    });
+    setZoom(5);
+  }, [deepLinkedWatchArea]);
 
   // Panel tab (feed / filter) — shared between desktop sidebar and mobile sheet
   const [panelTab, setPanelTab] = useState<PanelTab>("feed");
@@ -1217,10 +1240,6 @@ export default function LiveIntelligencePage() {
   }
 
   function handleMenuOpen() {
-    if (typeof window !== "undefined" && window.innerWidth < 1024) {
-      setMobilePanelOpen(true);
-      return;
-    }
     setSidebarOpen(true);
   }
 
@@ -2045,6 +2064,8 @@ export default function LiveIntelligencePage() {
               showGeofencing={layerVisibility.geofencing}
               showWeatherLayer={layerVisibility.weather}
               emphasizeRecentIncidents={emphasizeRecentIncidents}
+              centerLatitude={mapFocus?.latitude}
+              centerLongitude={mapFocus?.longitude}
               onMapStyleChange={setMapStyle}
               onExactPinChange={setExactPin}
               onStateChange={(s) => { setSelectedState(s); setSelectedCity(""); setSelectedStreet(""); }}
@@ -2077,14 +2098,16 @@ export default function LiveIntelligencePage() {
 
             {mapHoverPreview && mapHoverLabel ? (
               <div
-                className="pointer-events-none fixed z-40 max-w-[240px] rounded-2xl border border-white/10 bg-[#08101d]/95 px-3 py-2 text-left shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-md"
-                style={{ left: mapHoverPreview.clientX + 14, top: mapHoverPreview.clientY + 14 }}
+                className="pointer-events-none fixed z-40 max-w-[150px] rounded-xl border border-white/10 bg-[#08101d]/96 px-2 py-1.5 text-left shadow-[0_14px_40px_rgba(0,0,0,0.38)] backdrop-blur-md sm:max-w-[220px] sm:rounded-2xl sm:px-3 sm:py-2"
+                style={{ left: mapHoverPreview.clientX + 10, top: mapHoverPreview.clientY + 10 }}
               >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/80">
+                <div className="text-[8px] font-semibold uppercase tracking-[0.18em] text-cyan-200/80 sm:text-[11px] sm:tracking-[0.24em]">
                   Location preview
                 </div>
-                <div className="mt-1 text-sm font-semibold text-white">{mapHoverLabel}</div>
-                <div className="mt-1 font-mono text-[11px] text-white/45">
+                <div className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-white sm:mt-1 sm:text-sm">
+                  {mapHoverLabel}
+                </div>
+                <div className="mt-0.5 font-mono text-[9px] leading-tight text-white/45 sm:mt-1 sm:text-[11px]">
                   {formatPinLabel(mapHoverPreview.latitude, mapHoverPreview.longitude)}
                 </div>
               </div>

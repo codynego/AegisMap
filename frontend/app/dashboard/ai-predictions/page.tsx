@@ -8,12 +8,44 @@ import { DashboardMap } from "@/components/dashboard-map";
 import { getCurrentRole, isAnalystRole } from "@/lib/access";
 import { NIGERIA_STATE_NAMES } from "@/lib/nigeria-locations";
 import { NIGERIA_STATE_CENTERS } from "@/lib/nigeria-locations";
-import { toWeatherIntelligenceResponse, type WeatherContext } from "@/lib/weather-intelligence";
+import { toWeatherIntelligenceResponse, type WeatherContext, type WeatherOverlayPoint } from "@/lib/weather-intelligence";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
 
 type Insight = { title: string; value: string; tone: string; note: string };
+
+function toNumber(value: unknown) {
+  const next = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(next) ? next : null;
+}
+
+function overlayToWeatherContext(item: WeatherOverlayPoint | undefined): WeatherContext | null {
+  if (!item) return null;
+  return {
+    label: item.label || item.title || "Weather context",
+    severity: item.severity,
+    rainfallIntensity: item.precipitationMm == null
+      ? "Unknown"
+      : item.precipitationMm >= 15
+        ? "Heavy"
+        : item.precipitationMm >= 5
+          ? "Moderate"
+          : "Light",
+    visibility: item.visibilityKm == null
+      ? "Unknown"
+      : item.visibilityKm < 3
+        ? "Low"
+        : item.visibilityKm < 7
+          ? "Reduced"
+          : "Normal",
+    summary: item.summary || "Weather conditions available for this point.",
+    alerts: item.summary ? [item.summary] : [],
+    precipitationMm: item.precipitationMm,
+    visibilityKm: item.visibilityKm ?? null,
+    weatherCode: item.weatherCode ?? null,
+  };
+}
 
 function computeInsights(forecasts: any[] | null): Insight[] {
   if (!forecasts || forecasts.length === 0) {
@@ -70,8 +102,10 @@ export default function AiPredictionsDemoPage() {
 
   const insights = useMemo(() => computeInsights(forecasts), [forecasts]);
   const mapCenter = useMemo(() => {
-    if (selectedForecast?.latitude != null && selectedForecast?.longitude != null) {
-      return { latitude: selectedForecast.latitude, longitude: selectedForecast.longitude, zoom: 8 };
+    const latitude = toNumber(selectedForecast?.latitude);
+    const longitude = toNumber(selectedForecast?.longitude);
+    if (latitude !== null && longitude !== null) {
+      return { latitude, longitude, zoom: 8 };
     }
     if (selectedState && NIGERIA_STATE_CENTERS[selectedState]) {
       const center = NIGERIA_STATE_CENTERS[selectedState];
@@ -128,7 +162,7 @@ export default function AiPredictionsDemoPage() {
       if (!resp.ok) throw new Error(`Weather request failed: ${resp.status}`);
       const data = await resp.json();
       const parsed = toWeatherIntelligenceResponse(data);
-      setWeatherContext(parsed.incidentContexts?.[0] ?? null);
+      setWeatherContext(parsed.incidentContexts?.[0] ?? overlayToWeatherContext(parsed.overlay?.[0]) ?? null);
     } catch (err: any) {
       setWeatherContext({ label: "Weather", severity: "low", rainfallIntensity: "Unknown", visibility: "Unknown", summary: err?.message || String(err), alerts: [] });
     } finally {
@@ -158,7 +192,7 @@ export default function AiPredictionsDemoPage() {
         if (!resp.ok) throw new Error(`Weather request failed: ${resp.status}`);
         const data = await resp.json();
         const parsed = toWeatherIntelligenceResponse(data);
-        setWeatherContext(parsed.incidentContexts?.[0] ?? null);
+        setWeatherContext(parsed.incidentContexts?.[0] ?? overlayToWeatherContext(parsed.overlay?.[0]) ?? null);
       } catch (err: any) {
         setWeatherContext({ label: "Weather", severity: "low", rainfallIntensity: "Unknown", visibility: "Unknown", summary: err?.message || String(err), alerts: [] });
       } finally {

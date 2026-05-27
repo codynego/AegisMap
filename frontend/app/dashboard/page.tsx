@@ -10,6 +10,7 @@ import {
   haversineKm,
   requestAndStoreUserLocation,
   resolveNearestHub,
+  saveUserLocation,
   stateForCoordinates,
 } from "@/lib/user-location";
 
@@ -54,6 +55,7 @@ type WatchZoneRecord = {
   metadata?: {
     created_from?: string;
     pin_action?: string;
+    radius_meters?: number | string;
     location_state?: string;
   };
 };
@@ -66,6 +68,10 @@ type WatchAreaItem = {
   state: string;
   distanceKm: number;
   sourceLabel: string;
+  riskScore: number;
+  incidentCount: number;
+  latitude: number;
+  longitude: number;
 };
 
 type ApiListResponse<T> = { results?: T[] };
@@ -410,6 +416,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [dashboardNavPath, setDashboardNavPath] = useState("/dashboard");
   const navItems = useMemo<NavItem[]>(
     () => (isAnalystRole(role) ? INTERNAL_NAV_ITEMS : getPublicNavItems(role)),
     [role],
@@ -447,6 +454,15 @@ export default function DashboardPage() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncPath = () => setDashboardNavPath(`${window.location.pathname}${window.location.hash}`);
+    syncPath();
+    window.addEventListener("hashchange", syncPath);
+    return () => window.removeEventListener("hashchange", syncPath);
   }, []);
 
   useEffect(() => {
@@ -578,8 +594,18 @@ export default function DashboardPage() {
       .flatMap((area) => {
         const lat = toNum(area.centroid_latitude);
         const lng = toNum(area.centroid_longitude);
-        if (!isUserCreatedWatchZone(area)) return [];
-        const sourceLabel = "User-defined";
+        const riskScore = toNum(area.current_risk_score);
+        if (!isUserCreatedWatchZone(area) || lat === null || lng === null || riskScore === null) return [];
+        const radiusMeters = toNum(area.metadata?.radius_meters) ?? 1500;
+        const incidentCount = incidents.filter((incident) => {
+          if (!isActive(incident)) return false;
+          const incLat = toNum(incident.latitude);
+          const incLng = toNum(incident.longitude);
+          if (incLat === null || incLng === null) return false;
+          if (stateForCoordinates(incLat, incLng) !== stateForCoordinates(lat, lng)) return false;
+          return haversineKm(lat, lng, incLat, incLng) <= Math.max(1.5, radiusMeters / 1000);
+        }).length;
+        const sourceLabel = area.metadata?.created_from === "live_intelligence_pin" ? "User-defined" : "Shared";
         const state = area.metadata?.location_state || (lat !== null && lng !== null ? stateForCoordinates(lat, lng) : "Active");
         return [{
           id: area.id,
@@ -589,15 +615,21 @@ export default function DashboardPage() {
           state,
           distanceKm: position && lat !== null && lng !== null ? haversineKm(anchor.latitude, anchor.longitude, lat, lng) : 0,
           sourceLabel,
+          riskScore,
+          incidentCount,
+          latitude: lat,
+          longitude: lng,
         }];
       })
       .sort((a, b) => {
+        if (b.riskScore !== a.riskScore) return b.riskScore - a.riskScore;
+        if (b.incidentCount !== a.incidentCount) return b.incidentCount - a.incidentCount;
         if (a.sourceLabel !== b.sourceLabel) return a.sourceLabel === "User-defined" ? -1 : 1;
         if (a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
         return a.name.localeCompare(b.name);
       })
-      .slice(0, 6);
-  }, [anchor, position, watchZones]);
+      .slice(0, 9999);
+  }, [anchor, incidents, position, watchZones]);
 
   const stateAlerts = useMemo(
     () => {
@@ -711,7 +743,7 @@ export default function DashboardPage() {
       <DashboardSidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        activePath="/dashboard"
+        activePath={dashboardNavPath}
         onNavigate={(path) => router.push(path)}
         onLogout={handleLogout}
         role={role}
@@ -855,39 +887,6 @@ export default function DashboardPage() {
                 ) : (
                   <div className="rounded-xl border border-dashed border-white/[0.08] p-3 text-center text-xs text-white/30">
                     No active risk zones nearby
-                  </div>
-                )}
-              </div>
-
-              <div className="min-w-0 rounded-3xl border border-white/[0.06] bg-[#08101F]/90 p-3 sm:p-5">
-                <div className="mb-2 sm:mb-3 flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-[9px] sm:text-[10px] uppercase tracking-widest text-cyan-300/60">Watch areas</p>
-                    <h2 className="mt-0.5 text-sm sm:text-base font-semibold text-white">User-defined watch areas</h2>
-                  </div>
-                  <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] text-cyan-200">
-                    {nearbyWatchAreas.length} active
-                  </span>
-                </div>
-
-                {nearbyWatchAreas.length > 0 ? (
-                  <div className="space-y-1 sm:space-y-2">
-                    {nearbyWatchAreas.map((area) => (
-                      <div key={area.id} className="flex min-w-0 items-center justify-between gap-1.5 overflow-hidden rounded-xl border border-cyan-500/15 bg-cyan-500/5 px-2 py-2 sm:gap-3 sm:px-3.5 sm:py-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-xs sm:text-sm font-semibold text-white">{area.displayLabel}</p>
-                          <p className="text-[8px] sm:text-[11px] text-white/35 truncate">{area.coordinateLabel}</p>
-                          <p className="text-[8px] sm:text-[11px] text-white/25 truncate">{area.distanceKm.toFixed(1)}km · {area.state}</p>
-                        </div>
-                        <span className="flex-shrink-0 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-1 sm:px-2 py-0.5 text-[8px] sm:text-[10px] uppercase tracking-wider whitespace-nowrap text-cyan-200">
-                          {area.sourceLabel}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-white/[0.08] p-3 text-center text-xs text-white/30">
-                    No active watch areas nearby
                   </div>
                 )}
               </div>
