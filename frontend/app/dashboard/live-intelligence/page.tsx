@@ -221,6 +221,23 @@ function relativeTime(value?: string | null) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+type ConfidenceTier = "raw" | "emerging" | "probable" | "verified";
+
+const CONFIDENCE_STYLE: Record<ConfidenceTier, { label: string; chip: string; border: string; dot: string }> = {
+  raw: { label: "Raw", chip: "bg-slate-500/10 text-slate-300", border: "border-slate-500/20", dot: "bg-slate-400" },
+  emerging: { label: "Emerging", chip: "bg-amber-500/10 text-amber-300", border: "border-amber-500/20", dot: "bg-amber-400" },
+  probable: { label: "Probable", chip: "bg-orange-500/10 text-orange-300", border: "border-orange-500/20", dot: "bg-orange-400" },
+  verified: { label: "Verified", chip: "bg-emerald-500/10 text-emerald-300", border: "border-emerald-500/20", dot: "bg-emerald-400" },
+};
+
+function confidenceTier(confidence: string): ConfidenceTier {
+  const value = confidence.trim().toLowerCase();
+  if (value === "high" || value === "corroborated" || value === "verified") return "verified";
+  if (value === "probable" || value === "confirmed") return "probable";
+  if (value === "emerging" || value === "low") return "emerging";
+  return "raw";
+}
+
 function toNumber(value: number | string | null | undefined) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "string" && value.trim()) {
@@ -371,6 +388,18 @@ function SeverityBadge({ level }: { level: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
       <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />Low
+    </span>
+  );
+}
+
+function ConfidenceBadge({ confidence }: { confidence: string }) {
+  const tier = confidenceTier(confidence);
+  const style = CONFIDENCE_STYLE[tier];
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${style.chip} ${style.border}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {style.label}
     </span>
   );
 }
@@ -594,6 +623,9 @@ function IncidentDetail({
           Back to feed
         </button>
         <SeverityBadge level={incident.severity} />
+        <div className="mt-2">
+          <ConfidenceBadge confidence={incident.confidence} />
+        </div>
         <h2 className="mt-2.5 text-lg font-bold leading-snug text-white">{incident.title}</h2>
         <p className="mt-1 text-sm text-white/40">{incident.locationName || "Unknown location"}</p>
       </div>
@@ -603,7 +635,7 @@ function IncidentDetail({
           {[
             { label: "Type", value: formatReportType(incident.incidentType) },
             { label: "Status", value: incident.status },
-            { label: "Confidence", value: incident.confidence },
+            { label: "Confidence", value: confidenceTier(incident.confidence) },
             {
               label: "Detected",
               value: incident.detectedAt
@@ -870,26 +902,18 @@ function FilterPanel({
     <div className="grid gap-3">
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3.5">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-400">Active Filter</p>
-            <p className="mt-1.5 text-sm font-semibold text-white">
-              {scopedCount} incident{scopedCount === 1 ? "" : "s"}
-              {activeRadiusKm ? ` within ~${activeRadiusKm}km` : ""}
-            </p>
-          </div>
-          <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-400">
-            {dateLabel}
-          </span>
+          <p className="mt-1 text-sm font-medium capitalize text-white">{selectedReportType === "all" ? "All reports" : formatReportType(selectedReportType)}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-400">Active Filter</p>
+          <p className="mt-1.5 text-sm font-semibold text-white">{scopedCount} incident{scopedCount === 1 ? "" : "s"}{activeRadiusKm ? ` within ~${activeRadiusKm}km` : ""}</p>
+        </div>
+        <div className="mt-3">
+          <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-400">{dateLabel}</span>
         </div>
       </div>
 
       <label className="grid gap-1.5">
         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">Report Type</span>
-        <select
-          value={selectedReportType}
-          onChange={(e) => setSelectedReportType(e.target.value)}
-          className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60"
-        >
+        <select value={selectedReportType} onChange={(e) => setSelectedReportType(e.target.value)} className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60">
           <option value="all">All report types</option>
           {reportTypeOptions.map((rt) => (
             <option key={rt} value={rt}>{formatReportType(rt)}</option>
@@ -899,11 +923,7 @@ function FilterPanel({
 
       <label className="grid gap-1.5">
         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">Time Window</span>
-        <select
-          value={datePreset}
-          onChange={(e) => setDatePreset(e.target.value as DatePreset)}
-          className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60"
-        >
+        <select value={datePreset} onChange={(e) => setDatePreset(e.target.value as DatePreset)} className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400/60">
           <option value="all">All time</option>
           <option value="today">Today</option>
           <option value="7d">Last 7 days</option>
@@ -916,21 +936,11 @@ function FilterPanel({
         <div className="grid grid-cols-2 gap-2">
           <label className="grid gap-1.5">
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">Start</span>
-            <input
-              type="date"
-              value={customStartDate}
-              onChange={(e) => setCustomStartDate(e.target.value)}
-              className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60"
-            />
+            <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60" />
           </label>
           <label className="grid gap-1.5">
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">End</span>
-            <input
-              type="date"
-              value={customEndDate}
-              onChange={(e) => setCustomEndDate(e.target.value)}
-              className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60"
-            />
+            <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="w-full rounded-xl border border-white/[0.08] bg-[#0A1020]/80 px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-400/60" />
           </label>
         </div>
       )}
@@ -938,25 +948,15 @@ function FilterPanel({
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3.5">
         <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-emerald-400">Map Layers</p>
         <div className="mt-3 grid gap-2">
-          {(
-            [
-              { key: "incidents" as const, label: "Incidents", desc: "Show incident markers" },
-              { key: "heatmaps" as const, label: "Heatmaps", desc: "Clustering patterns" },
-              { key: "riskZones" as const, label: "Risk Zones", desc: "AI-generated threat areas" },
-              { key: "geofencing" as const, label: "Geofencing", desc: "Virtual boundaries" },
-              { key: "weather" as const, label: "Weather", desc: "Rain, flood and visibility" },
-            ] as const
-          ).map((layer) => (
-            <label
-              key={layer.key}
-              className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-[#0A1020]/60 px-3 py-2.5"
-            >
-              <input
-                type="checkbox"
-                checked={layerVisibility[layer.key]}
-                onChange={() => toggleLayer(layer.key)}
-                className="mt-0.5 h-4 w-4 rounded border-white/20 bg-[#0A1020] accent-cyan-400"
-              />
+          {[
+            { key: "incidents" as const, label: "Incidents", desc: "Show incident markers" },
+            { key: "heatmaps" as const, label: "Heatmaps", desc: "Clustering patterns" },
+            { key: "riskZones" as const, label: "Risk Zones", desc: "AI-generated threat areas" },
+            { key: "geofencing" as const, label: "Geofencing", desc: "Virtual boundaries" },
+            { key: "weather" as const, label: "Weather", desc: "Rain, flood and visibility" },
+          ].map((layer) => (
+            <label key={layer.key} className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-[#0A1020]/60 px-3 py-2.5">
+              <input type="checkbox" checked={layerVisibility[layer.key]} onChange={() => toggleLayer(layer.key)} className="mt-0.5 h-4 w-4 rounded border-white/20 bg-[#0A1020] accent-cyan-400" />
               <span>
                 <span className="block text-sm font-medium text-white">{layer.label}</span>
                 <span className="mt-0.5 block text-xs text-white/40">{layer.desc}</span>

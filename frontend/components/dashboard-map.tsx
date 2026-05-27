@@ -169,6 +169,10 @@ type PinActionPayload = {
 };
 
 type DashboardMapProps = {
+  centerLatitude?: number;
+  centerLongitude?: number;
+  fitBoundsTrigger?: number;
+  fitBoundsPath?: Array<[number, number]>;
   selectedState?: string;
   selectedCity?: string;
   selectedStreet?: string;
@@ -544,6 +548,10 @@ function makeTrackedPositionMarker(): HTMLElement {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function DashboardMap({
+  centerLatitude,
+  centerLongitude,
+  fitBoundsTrigger,
+  fitBoundsPath,
   selectedState: initialState = "",
   selectedCity: initialCity = "",
   selectedStreet: initialStreet = "",
@@ -636,9 +644,13 @@ export function DashboardMap({
   const mapStyle = initialMapStyle;
   const zoomLevel = initialZoom;
   const exactPin = initialExactPin;
+  const overrideCenter =
+    typeof centerLatitude === "number" && typeof centerLongitude === "number"
+      ? ([centerLongitude, centerLatitude] as [number, number])
+      : null;
 
   const focusCenter: [number, number] =
-    selectedAddress?.coordinates ?? stateData?.center ?? NIGERIA_DEFAULT_CENTER;
+    overrideCenter ?? selectedAddress?.coordinates ?? stateData?.center ?? NIGERIA_DEFAULT_CENTER;
 
   // ── Keep pinpointModeRef in sync ──
   useEffect(() => {
@@ -918,6 +930,18 @@ export function DashboardMap({
       routeMarkersRef.current = [];
     };
   }, [loaded, routePath, routeStops]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const nextPath = fitBoundsPath ?? routePath;
+    if (!map || !loaded || nextPath.length < 2) return;
+
+    const bounds = nextPath.reduce(
+      (acc, coordinate) => acc.extend(coordinate as [number, number]),
+      new mapboxgl.LngLatBounds(nextPath[0], nextPath[0]),
+    );
+    map.fitBounds(bounds, { padding: 72, duration: 900, maxZoom: 9 });
+  }, [fitBoundsPath, fitBoundsTrigger, loaded, routePath]);
 
   useEffect(() => {
     const map = mapRef.current;

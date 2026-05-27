@@ -47,6 +47,19 @@ def _location_state_for_incident(incident: Incident) -> str:
     )
 
 
+
+    def _confidence_tier_from_visibility(score: float) -> str:
+        try:
+            if isinstance(score, (int, float)):
+                if score >= 0.8:
+                    return "verified"
+                if score >= 0.6:
+                    return "probable"
+                if score >= 0.3:
+                    return "emerging"
+        except Exception:
+            pass
+        return "raw"
 def _public_location_label(state: str, fallback: str = "") -> str:
     if state:
         return f"{state} area"
@@ -63,7 +76,8 @@ def _serialize_public_incident(incident: Incident) -> dict:
         "title": incident.title,
         "incident_type": incident.incident_type,
         "severity": incident.severity,
-        "status": incident.status,
+            "visibility_score": visibility_score,
+            "confidence_tier": _confidence_tier_from_visibility(visibility_score),
         "location_name": _public_location_label(state, incident.location_name),
         "location_state": state,
         "latitude": _round_coordinate(incident.latitude, 1),

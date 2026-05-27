@@ -58,6 +58,7 @@ class IncidentSerializer(serializers.ModelSerializer):
     hidden_from_map = serializers.SerializerMethodField()
     signal_count = serializers.SerializerMethodField()
     confidence_score = serializers.SerializerMethodField()
+    confidence_tier = serializers.SerializerMethodField()
     verification_summary = serializers.SerializerMethodField()
 
     class Meta:
@@ -81,6 +82,7 @@ class IncidentSerializer(serializers.ModelSerializer):
             "metadata",
             "signal_count",
             "confidence_score",
+            "confidence_tier",
             "verification_summary",
             "visibility_score",
             "hidden_from_map",
@@ -116,6 +118,24 @@ class IncidentSerializer(serializers.ModelSerializer):
             if isinstance(signal_score, (int, float)):
                 return round(float(signal_score) * 100, 2)
         return None
+
+    def get_confidence_tier(self, instance):
+        try:
+            score = self.get_visibility_score(instance)
+        except Exception:
+            score = None
+
+        try:
+            if isinstance(score, (int, float)):
+                if score >= 0.8:
+                    return "verified"
+                if score >= 0.6:
+                    return "probable"
+                if score >= 0.3:
+                    return "emerging"
+        except Exception:
+            pass
+        return "raw"
 
     def get_verification_summary(self, instance):
         metadata = instance.metadata or {}

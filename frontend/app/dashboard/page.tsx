@@ -120,7 +120,44 @@ function scoreToLevel(s: number): SafetyLevel {
 }
 
 function sevWeight(s: string) { return s === "critical" ? 5 : s === "high" ? 3.5 : s === "medium" ? 2 : 1; }
-function confWeight(c: string) { return c === "high" || c === "corroborated" ? 1.25 : c === "emerging" ? 1.05 : c === "low" ? 0.85 : 0.75; }
+function confWeight(c: string) {
+  switch (confidenceTier(c)) {
+    case "verified":
+      return 1.25;
+    case "probable":
+      return 1.1;
+    case "emerging":
+      return 0.95;
+    default:
+      return 0.8;
+  }
+}
+
+type ConfidenceTier = "raw" | "emerging" | "probable" | "verified";
+
+const CONFIDENCE_STYLE: Record<ConfidenceTier, { label: string; chip: string; border: string; dot: string }> = {
+  raw: { label: "Unverified", chip: "bg-slate-500/10 text-slate-300", border: "border-slate-500/20", dot: "bg-slate-400" },
+  emerging: { label: "Emerging", chip: "bg-amber-500/10 text-amber-300", border: "border-amber-500/20", dot: "bg-amber-400" },
+  probable: { label: "Probable", chip: "bg-orange-500/10 text-orange-300", border: "border-orange-500/20", dot: "bg-orange-400" },
+  verified: { label: "Verified", chip: "bg-emerald-500/10 text-emerald-300", border: "border-emerald-500/20", dot: "bg-emerald-400" },
+};
+
+function confidenceTier(confidence: string): ConfidenceTier {
+  const value = confidence.trim().toLowerCase();
+  if (value === "high" || value === "corroborated" || value === "verified") return "verified";
+  if (value === "probable" || value === "confirmed") return "probable";
+  if (value === "emerging" || value === "low") return "emerging";
+  return "raw";
+}
+
+function confidenceRank(confidence: string): number {
+  switch (confidenceTier(confidence)) {
+    case "verified": return 3;
+    case "probable": return 2;
+    case "emerging": return 1;
+    default: return 0;
+  }
+}
 function incidentTypeWeight(type: string) {
   const normalized = normalizeReportType(type);
   switch (normalized) {
@@ -156,10 +193,6 @@ function freshWeight(v: string, nowTs: number) {
 function isActive(inc: IncidentRecord) {
   const s = inc.status.trim().toLowerCase();
   return s !== "closed" && s !== "resolved" && s !== "dismissed";
-}
-
-function isVerified(inc: NearbyIncident) {
-  return inc.confidence === "high" || inc.confidence === "corroborated";
 }
 
 function levelSummary(level: SafetyLevel, area: string): string {
@@ -320,6 +353,7 @@ function ActionButton({
 function IncidentCard({ inc, onClick }: { inc: NearbyIncident; onClick: () => void }) {
   const sev = inc.severity as SafetyLevel;
   const cfg = RISK_STYLE[sev] ?? RISK_STYLE.low;
+  const confidence = CONFIDENCE_STYLE[confidenceTier(inc.confidence)];
   return (
     <button
       type="button"
@@ -342,6 +376,10 @@ function IncidentCard({ inc, onClick }: { inc: NearbyIncident; onClick: () => vo
         <span className="flex-shrink-0">{inc.distanceKm.toFixed(1)}km</span>
         <span className="flex-shrink-0">·</span>
         <span className="flex-shrink-0">{relTime(inc.detectedAt)}</span>
+      </div>
+      <div className="mt-2 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-widest text-white/35">
+        <span className={`h-1.5 w-1.5 rounded-full ${confidence.dot}`} />
+        <span className={`rounded-full border px-1.5 py-0.5 ${confidence.chip} ${confidence.border}`}>{confidence.label}</span>
       </div>
       <div className="mt-2 text-[10px] font-semibold uppercase tracking-widest text-cyan-300/80">Open detail</div>
     </button>
@@ -489,8 +527,7 @@ export default function DashboardPage() {
           locationName: inc.location_name,
         }];
       })
-      .filter(isVerified)
-      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence) || a.distanceKm - b.distanceKm)
       .slice(0, 5);
   }, [anchor, currentArea.state, incidents, position]);
 
@@ -701,7 +738,7 @@ export default function DashboardPage() {
             <div className="min-w-0 rounded-3xl border border-white/[0.06] bg-[#08101F]/90 p-3 sm:p-5">
               <div className="mb-2 sm:mb-3 flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-[9px] sm:text-[10px] uppercase tracking-widest text-white/30">Verified nearby alerts</p>
+                  <p className="text-[9px] sm:text-[10px] uppercase tracking-widest text-white/30">Nearby alerts by confidence</p>
                   <h2 className="mt-0.5 text-sm sm:text-base font-semibold text-white">Live around you</h2>
                 </div>
                 <button onClick={() => nav(1)} className="hidden sm:flex flex-shrink-0 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/50 transition hover:text-cyan-300">
@@ -725,7 +762,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="rounded-2xl border border-dashed border-white/[0.08] p-3 sm:p-4 text-center text-xs text-white/30">
-                  No verified alerts near your current area
+                  No nearby alerts in your current area
                 </div>
               )}
             </div>

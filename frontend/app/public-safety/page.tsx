@@ -100,6 +100,32 @@ function routeTone(level: string) {
   return "border-cyan-400/30 bg-cyan-500/10 text-cyan-200";
 }
 
+type ConfidenceTier = "raw" | "emerging" | "probable" | "verified";
+
+const CONFIDENCE_STYLE: Record<ConfidenceTier, { label: string; chip: string; border: string; dot: string }> = {
+  raw: { label: "Raw", chip: "bg-slate-500/10 text-slate-300", border: "border-slate-500/20", dot: "bg-slate-400" },
+  emerging: { label: "Emerging", chip: "bg-amber-500/10 text-amber-300", border: "border-amber-500/20", dot: "bg-amber-400" },
+  probable: { label: "Probable", chip: "bg-orange-500/10 text-orange-300", border: "border-orange-500/20", dot: "bg-orange-400" },
+  verified: { label: "Verified", chip: "bg-emerald-500/10 text-emerald-300", border: "border-emerald-500/20", dot: "bg-emerald-400" },
+};
+
+function confidenceTierFromVisibility(score: number): ConfidenceTier {
+  if (score >= 0.8) return "verified";
+  if (score >= 0.6) return "probable";
+  if (score >= 0.3) return "emerging";
+  return "raw";
+}
+
+function ConfidenceBadge({ tier }: { tier: ConfidenceTier }) {
+  const style = CONFIDENCE_STYLE[tier];
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${style.chip} ${style.border}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {style.label}
+    </span>
+  );
+}
+
 export default function PublicSafetyPage() {
   const [selectedState, setSelectedState] = useState("");
   const [routeQuery, setRouteQuery] = useState("");
@@ -150,7 +176,7 @@ export default function PublicSafetyPage() {
           title: incident.title,
           incidentType: incident.incident_type,
           severity: incident.severity,
-          confidence: "high",
+          confidence: confidenceTierFromVisibility(incident.visibility_score),
           status: incident.status,
           summary: incident.summary,
           detectedAt: incident.detected_at,
@@ -209,12 +235,12 @@ export default function PublicSafetyPage() {
                 Explore a limited, generalized view of public safety conditions.
               </h2>
               <p className="mt-4 max-w-2xl text-sm leading-7 text-white/60 sm:text-base">
-                This page shows verified, non-sensitive public advisories only. Exact locations, raw reports, operational layers, and high-risk intelligence stay behind login.
+                This page shows non-sensitive public advisories with progressive confidence labels. Exact locations, raw reports, operational layers, and high-risk intelligence stay behind login.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
                 <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">
-                  Verified alerts only
+                  Verified public alerts
                 </span>
                 <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
                   Generalized locations
@@ -293,41 +319,50 @@ export default function PublicSafetyPage() {
           <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.03] p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300">Recent verified alerts</p>
-                <h3 className="mt-1 text-xl font-semibold text-white">Public advisories</h3>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300">Recent public incidents</p>
+                <h3 className="mt-1 text-xl font-semibold text-white">Public confidence ladder</h3>
               </div>
               <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-white/40">
-                {data?.alerts.length ?? 0} visible
+                {(data?.incidents ?? []).length} visible
               </span>
             </div>
 
             <div className="mt-5 space-y-3">
               {loading ? (
                 <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4 text-sm text-white/45">
-                  Loading public alerts...
+                  Loading public advisories...
                 </div>
               ) : error ? (
                 <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-200">
                   {error}
                 </div>
-              ) : (data?.alerts.length ?? 0) > 0 ? (
-                data?.alerts.map((alert) => (
-                  <article key={alert.id} className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h4 className="text-sm font-semibold text-white">{alert.title}</h4>
-                        <p className="mt-1 text-sm leading-6 text-white/60">{alert.message}</p>
+              ) : (data?.incidents.length ?? 0) > 0 ? (
+                data?.incidents.slice(0, 6).map((incident) => {
+                  const tier = confidenceTierFromVisibility(incident.visibility_score);
+                  return (
+                    <article key={incident.id} className="rounded-2xl border border-white/[0.06] bg-[#0A1020]/80 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">{incident.title}</h4>
+                          <p className="mt-1 text-sm leading-6 text-white/60">{incident.summary}</p>
+                        </div>
+                        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${severityTone(incident.severity)}`}>
+                          {incident.severity}
+                        </span>
                       </div>
-                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${severityTone(alert.severity)}`}>
-                        {alert.severity}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-3 text-xs text-white/40">
-                      <span>{alert.location_name}</span>
-                      <span>{relativeTime(alert.triggered_at)}</span>
-                    </div>
-                  </article>
-                ))
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <ConfidenceBadge tier={tier} />
+                        <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-white/40">
+                          {formatReportType(incident.incident_type)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-3 text-xs text-white/40">
+                        <span>{incident.location_name}</span>
+                        <span>{relativeTime(incident.detected_at)}</span>
+                      </div>
+                    </article>
+                  );
+                })
               ) : (
                 <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4 text-sm text-white/45">
                   No public advisories are available for this state right now.
