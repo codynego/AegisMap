@@ -790,6 +790,19 @@ export default function GeoPulseLanding() {
                 <div style={{ fontSize: 14, color: "rgba(254,252,248,0.5)", lineHeight: 1.7 }}>
                   We'll reach out as soon as access opens. Watch your inbox.
                 </div>
+                <a
+                  href="https://chat.whatsapp.com/IIE4g1xrDsx93iL66lrt3T?s=cl&p=a&mlu=1"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="btn-primary"
+                  style={{
+                    marginTop: 18,
+                    background: "linear-gradient(135deg, #25D366, #128C7E)",
+                    color: "#fff",
+                  }}
+                >
+                  Join the WhatsApp Community
+                </a>
               </div>
             )}
 
