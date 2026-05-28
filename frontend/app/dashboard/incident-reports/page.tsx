@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardMap } from "@/components/dashboard-map";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
-import { getCurrentRole } from "@/lib/access";
+import { getCurrentRole, type NavItem } from "@/lib/access";
 import { formatReportType, REPORT_TYPE_DEFINITIONS } from "@/lib/report-types";
 
 type ExactPin = {
