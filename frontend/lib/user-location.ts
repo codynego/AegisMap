@@ -1,8 +1,6 @@
 import { reverseGeocodeLocation } from "@/lib/location-search";
 import { AREA_HUBS, type AreaHub } from "@/lib/nigeria-locations";
 
-export { searchAreaHubs } from "@/lib/nigeria-locations";
-
 export type UserLocation = {
   latitude: number;
   longitude: number;
