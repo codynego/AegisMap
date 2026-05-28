@@ -1,551 +1,833 @@
-import Link from "next/link";
+"use client";
 
-const navItems = ["Features", "Solutions", "Intelligence", "Pricing", "Docs"];
+import { useState, useEffect, useRef } from "react";
 
-const featureCards = [
+const howItWorks = [
   {
-    badge: "MP",
-    title: "Incident Mapping",
-    body: "Global geospatial tracking of incidents with millisecond precision and rich contextual metadata.",
-    accent: "var(--primary-container)",
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    ),
+    title: "Live Community Map",
+    desc: "See real-time updates from people around you — shared safely and anonymously when needed. Your neighborhood, in the moment.",
   },
   {
-    badge: "AI",
-    title: "AI Threat Detection",
-    body: "Proprietary LLMs analyzing signals to identify emerging threats before they materialize.",
-    accent: "var(--secondary)",
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2l7 4-7 4-7-4 7-4zM5 10v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+    title: "Awareness Zones",
+    desc: "Understand areas with unusual activity or repeated reports. Dynamic risk shading that updates as the community contributes.",
   },
   {
-    badge: "RI",
-    title: "Route Intelligence",
-    body: "Dynamic risk-aware routing for assets, personnel, and high-value logistics operations.",
-    accent: "var(--primary-container)",
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+    ),
+    title: "Instant Alerts",
+    desc: "Get notified when something important is happening near you or in places you care about — before it's too late.",
   },
   {
-    badge: "GF",
-    title: "Heatmaps & Geofencing",
-    body: "Automated perimeter alerts and risk concentration visualizations across any geographic scale.",
-    accent: "var(--secondary)",
-  },
-  {
-    badge: "RA",
-    title: "Real-Time Alerts",
-    body: "Multi-channel instant notifications with priority routing for emergency response coordination.",
-    accent: "var(--primary-container)",
-  },
-  {
-    badge: "DS",
-    title: "Drone & Satellite Analysis",
-    body: "Integration of high-altitude imaging and local drone feeds for comprehensive surveillance.",
-    accent: "var(--secondary)",
-  },
-  {
-    badge: "PA",
-    title: "Predictive Analytics",
-    body: "Forecasting future risk hotspots using historical patterns and live environmental data.",
-    accent: "var(--primary-container)",
-  },
-  {
-    badge: "EC",
-    title: "Emergency Coordination",
-    body: "Unified communication layer for multi-agency response and asset management.",
-    accent: "var(--secondary)",
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 3l8 5-8 5-8-5 8-5zM4 13v6h16v-6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+    title: "Shared Reporting",
+    desc: "Quickly report what you see so others can stay informed. One tap, one report — community awareness starts with you.",
   },
 ];
 
-const lifecycle = [
-  {
-    step: "01",
-    badge: "SR",
-    title: "Collect Reports",
-    body: "Aggregating disparate data from satellites, IoT, and field reports.",
-    accent: "var(--primary-container)",
-    ink: "var(--on-primary-container)",
-  },
-  {
-    step: "02",
-    badge: "AN",
-    title: "Analyze Signals",
-    body: "Processing noise through advanced AI models to find relevant data points.",
-    accent: "var(--secondary)",
-    ink: "var(--on-secondary)",
-  },
-  {
-    step: "03",
-    badge: "PT",
-    title: "Detect Patterns",
-    body: "Synthesizing multi-vector analysis to identify recurring risk signatures.",
-    accent: "var(--primary-container)",
-    ink: "var(--on-primary-container)",
-  },
-  {
-    step: "04",
-    badge: "GI",
-    title: "Generate Intelligence",
-    body: "Transforming data into actionable tactical intelligence reports.",
-    accent: "var(--secondary)",
-    ink: "var(--on-secondary)",
-  },
-  {
-    step: "05",
-    badge: "CR",
-    title: "Coordinate Response",
-    body: "Deploying assets and managing personnel based on AI insights.",
-    accent: "var(--primary-container)",
-    ink: "var(--on-primary-container)",
-  },
+const audience = [
+  { icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2l9 5-9 5-9-5 9-5zM3 10v6a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ), label: "Students", desc: "Moving around cities and campuses safely." },
+  { icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 11l9-6 9 6v6a2 2 0 0 1-2 2h-2v-6H7v6H5a2 2 0 0 1-2-2v-6z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ), label: "Families", desc: "Staying connected and aware in your neighborhood." },
+  { icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="7" width="20" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+        <circle cx="7.5" cy="17.5" r="1.5" fill="currentColor" />
+        <circle cx="16.5" cy="17.5" r="1.5" fill="currentColor" />
+      </svg>
+    ), label: "Riders & Drivers", desc: "Real-time awareness on the road." },
+  { icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="6" width="6" height="12" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <rect x="9.5" y="3" width="11.5" height="15" rx="1" stroke="currentColor" strokeWidth="1.2" />
+      </svg>
+    ), label: "Urban Communities", desc: "High-traffic areas that need shared situational awareness." },
 ];
 
-const footerColumns = [
-  {
-    title: "Platform",
-    links: ["Intelligence API", "Case Studies", "Documentation"],
-  },
-  {
-    title: "Company",
-    links: ["About Us", "Careers", "Security"],
-  },
-  {
-    title: "Legal",
-    links: ["Privacy Policy", "Terms of Service", "Compliance"],
-  },
+const perks = [
+  "Beta access before public launch",
+  "Shape features that matter to your community",
+  "Early community contributor status",
+  "First updates as the platform evolves",
 ];
 
-function HudChip({
-  label,
-  color,
-}: {
-  label: string;
-  color: string;
-}) {
+export default function GeoPulseLanding() {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [scrollY, setScrollY] = useState(0);
+  const heroRef = useRef(null);
+
+  useEffect(() => {
+    const onScroll = () => setScrollY(window.scrollY);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const handleSubmit = async () => {
+    setSubmitError("");
+    if (!email.trim() || !email.includes("@")) {
+      setSubmitError("Please enter a valid email.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+      if (!url || !anonKey) {
+        throw new Error("Supabase URL or anon key not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+      }
+
+      const payload = [{ email: email.trim(), role: role || null, created_at: new Date().toISOString() }];
+
+      const res = await fetch(`${url.replace(/\/$/, "")}/rest/v1/waitlist`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Supabase insert failed: ${res.status} ${text}`);
+      }
+
+      setSubmitted(true);
+    } catch (err: any) {
+      console.error(err);
+      setSubmitError(err?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <span
-      className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border bg-white/5 px-2 font-mono-ui text-[10px] font-semibold uppercase tracking-[0.18em]"
-      style={{ color, borderColor: "color-mix(in srgb, currentColor 20%, transparent)" }}
-    >
-      {label}
-    </span>
-  );
-}
+    <div style={{
+      fontFamily: "var(--font-display), 'Space Grotesk', sans-serif",
+      background: "transparent",
+      color: "var(--on-surface)",
+      minHeight: "100vh",
+      overflowX: "hidden",
+      width: "100%",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-export default function Home() {
-  return (
-    <div className="bg-[var(--background)] text-[var(--on-surface)]">
-      <header className="fixed top-0 z-50 w-full border-b border-[color:var(--outline-variant)]/20 bg-[rgb(14_19_34_/_0.6)] backdrop-blur-xl">
-        <nav className="mx-auto flex max-w-[1440px] items-center justify-between px-4 py-4 md:px-8">
-          <div className="flex items-center gap-2 md:gap-3">
-            <span className="font-display text-[24px] font-bold text-[var(--primary)] md:text-[32px]">
-              GeoPulse AI
-            </span>
-            <span className="rounded-full border border-[rgb(78_222_163_/_0.2)] bg-[rgb(78_222_163_/_0.1)] px-2 py-0.5 font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--secondary)]">
-              TACTICAL-V4
+        :root {
+          --sage: var(--primary);
+          --sage-light: rgba(76,215,246,0.08);
+          --sage-dark: var(--primary-container);
+          --earth: var(--primary);
+          --earth-light: rgba(14,165,233,0.12);
+          --earth-dark: var(--primary-strong);
+          --ink: var(--on-surface);
+          --ink-muted: var(--on-surface-variant);
+          --ink-faint: var(--outline);
+          --cream: transparent;
+          --cream-dark: rgba(255,255,255,0.02);
+          --white: rgba(255,255,255,0.02);
+        }
+
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(0.85); }
+        }
+        @keyframes ripple {
+          0% { transform: scale(0.8); opacity: 0.8; }
+          100% { transform: scale(2.5); opacity: 0; }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        .fade-up { animation: fadeUp 0.6s ease both; }
+        .d1 { animation-delay: 0.05s; }
+        .d2 { animation-delay: 0.2s; }
+        .d3 { animation-delay: 0.35s; }
+        .d4 { animation-delay: 0.5s; }
+
+        .card {
+          background: var(--white);
+          border: 1px solid rgba(26,24,20,0.08);
+          border-radius: 20px;
+          padding: 28px 24px;
+          transition: transform 0.25s ease, box-shadow 0.25s ease;
+        }
+        .card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 32px rgba(26,24,20,0.08);
+        }
+
+        .pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          background: var(--cream-dark);
+          border: 1px solid rgba(26,24,20,0.1);
+          border-radius: 9999px;
+          padding: 6px 16px;
+          font-size: 12px;
+          font-weight: 500;
+          letter-spacing: 0.05em;
+          color: var(--ink-muted);
+          text-transform: uppercase;
+        }
+
+        .btn-primary {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 14px 28px;
+          background: var(--ink);
+          color: #060910;
+          font-family: 'Space Grotesk', sans-serif;
+          font-size: 15px;
+          font-weight: 500;
+          border: none;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: background 0.2s, transform 0.15s;
+          text-decoration: none;
+          width: 100%;
+        }
+        .btn-primary:hover { background: #2d2a24; transform: translateY(-1px); }
+
+        .email-input {
+          width: 100%;
+          background: rgba(6,10,20,0.85);
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 12px;
+          padding: 13px 16px;
+          font-size: 15px;
+          font-family: 'Space Grotesk', sans-serif;
+          color: #e8edf2;
+          outline: none;
+          transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .email-input:focus {
+          border-color: var(--sage);
+          box-shadow: 0 0 0 4px rgba(56,189,248,0.08);
+        }
+        .email-input::placeholder { color: #64748b; }
+
+        /* Ensure selects match dark input styling and options are readable */
+        select.email-input {
+          -webkit-appearance: none;
+          appearance: none;
+          background: rgba(6,10,20,0.85);
+          border: 1px solid rgba(255,255,255,0.06);
+          color: #e8edf2;
+        }
+        select.email-input:focus {
+          border-color: var(--sage);
+          box-shadow: 0 0 0 4px rgba(56,189,248,0.06);
+          outline: none;
+        }
+        select.email-input option {
+          background: var(--surface-panel);
+          color: var(--on-surface);
+        }
+
+        .dot-live {
+          width: 8px; height: 8px; border-radius: 50%;
+          background: #4ade80;
+          animation: pulse 2s ease-in-out infinite;
+          display: inline-block;
+        }
+
+        .ripple-wrap {
+          position: relative;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .ripple {
+          position: absolute;
+          width: 60px; height: 60px;
+          border-radius: 50%;
+          border: 2px solid var(--sage);
+          animation: ripple 2.4s ease-out infinite;
+        }
+        .ripple:nth-child(2) { animation-delay: 0.8s; }
+        .ripple:nth-child(3) { animation-delay: 1.6s; }
+
+        .section-label {
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: var(--sage-dark);
+        }
+
+        .serif { font-family: 'Space Grotesk', sans-serif; font-weight: 700; }
+        .hero-title { font-weight: 500; }
+        @media (min-width: 1024px) { .hero-title { font-weight: 800; } }
+
+        .map-blob {
+          position: absolute;
+          border-radius: 50%;
+          filter: blur(40px);
+          pointer-events: none;
+        }
+
+        @media (max-width: 640px) {
+          .hide-mobile { display: none !important; }
+        }
+      `}</style>
+
+      {/* ── NAV ── */}
+      <nav style={{
+        position: "sticky", top: 0, zIndex: 100,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "14px clamp(16px, 5vw, 48px)",
+        background: "transparent",
+        backdropFilter: "none",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+      }}>
+        <span style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em", color: "var(--ink)" }}>
+          <span style={{ color: "var(--sage-dark)" }}>Geo</span>Pulse AI
+        </span>
+        <a href="#waitlist" style={{
+          padding: "9px 20px",
+          background: "linear-gradient(135deg,#0ea5e9,#06b6d4)",
+          color: "#fff",
+          fontSize: 13,
+          fontWeight: 500,
+          borderRadius: 9999,
+          textDecoration: "none",
+          transition: "opacity 0.2s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+        >
+          Join Waitlist
+        </a>
+      </nav>
+
+      {/* ── HERO ── */}
+      <section ref={heroRef} style={{
+        position: "relative",
+        padding: "clamp(56px, 14vw, 112px) clamp(16px, 5vw, 48px) clamp(48px, 10vw, 80px)",
+        textAlign: "center",
+        overflow: "hidden",
+      }}>
+        {/* Background texture */}
+        <div style={{
+          position: "absolute", inset: 0, pointerEvents: "none",
+          background: "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(143,175,138,0.18) 0%, transparent 70%)",
+        }} />
+        <div className="map-blob" style={{ width: 400, height: 400, background: "rgba(143,175,138,0.12)", top: -80, left: "30%", transform: "translateX(-50%)" }} />
+
+        <div style={{ position: "relative", maxWidth: 1100, margin: "0 auto" }}>
+          <div className="fade-up d1" style={{ marginBottom: 28 }}>
+            <span className="pill">
+              <span className="dot-live" />
+              Coming Soon — Join the Waitlist
             </span>
           </div>
 
-          <div className="hidden items-center gap-8 md:flex">
-            {navItems.map((item, index) => (
-              <a
-                key={item}
-                href="#"
-                className={
-                  index === 0
-                    ? "border-b-2 border-[var(--primary)] pb-1 text-[18px] font-semibold text-[var(--primary)]"
-                    : "text-[18px] font-semibold text-[var(--on-surface-variant)] transition-colors hover:text-[var(--primary)]"
-                }
-              >
-                {item}
-              </a>
+          <h1 className="fade-up d2 serif hero-title" style={{
+            fontSize: "clamp(38px, 8vw, 80px)",
+            fontWeight: 400,
+            lineHeight: 1.05,
+            letterSpacing: "-0.02em",
+            color: "var(--ink)",
+            marginBottom: 12,
+          }}>
+            Community Safety,
+            <br />
+            <em style={{ color: "var(--sage-dark)", fontStyle: "italic" }}>Powered by Awareness.</em>
+          </h1>
+
+          <p className="fade-up d3" style={{
+            marginTop: 24,
+            fontSize: "clamp(16px, 2.2vw, 19px)",
+            lineHeight: 1.75,
+            color: "var(--ink-muted)",
+            maxWidth: 1000,
+            margin: "24px auto 0",
+          }}>
+            GeoPulse AI is a real-time community awareness platform that helps people stay informed about what's happening around them — so they can make safer decisions, together.
+          </p>
+
+          <div className="fade-up d4" style={{ marginTop: 40, display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            <a href="#waitlist" style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              padding: "13px 28px",
+              background: "linear-gradient(135deg,#0ea5e9,#06b6d4)",
+              color: "#fff",
+              fontSize: 15, fontWeight: 500,
+              borderRadius: 12, textDecoration: "none",
+              transition: "opacity 0.2s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.82"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              Join the Waitlist →
+            </a>
+            <a href="#how-it-works" style={{
+              display: "inline-flex", alignItems: "center",
+              padding: "13px 24px",
+              background: "transparent",
+              border: "1px solid rgba(26,24,20,0.18)",
+              color: "var(--ink-muted)",
+              fontSize: 15, fontWeight: 500,
+              borderRadius: 12, textDecoration: "none",
+            }}>
+              See how it works ↓
+            </a>
+          </div>
+        </div>
+
+        {/* Animated map preview */}
+        <div style={{
+          position: "relative",
+          maxWidth: 640,
+          margin: "clamp(48px, 8vw, 72px) auto 0",
+          height: 320,
+          background: "var(--white)",
+          borderRadius: 24,
+          border: "1px solid rgba(26,24,20,0.08)",
+          overflow: "hidden",
+          boxShadow: "0 24px 64px rgba(26,24,20,0.1)",
+        }}>
+          {/* Fake map grid */}
+          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.06 }}>
+            <defs>
+              <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+                <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#1a1814" strokeWidth="0.7"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#grid)" />
+          </svg>
+          {/* Road lines */}
+          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+            <line x1="0" y1="110" x2="440" y2="110" stroke="rgba(143,175,138,0.3)" strokeWidth="8"/>
+            <line x1="220" y1="0" x2="220" y2="220" stroke="rgba(143,175,138,0.3)" strokeWidth="5"/>
+            <line x1="0" y1="55" x2="440" y2="55" stroke="rgba(143,175,138,0.15)" strokeWidth="3"/>
+            <line x1="0" y1="170" x2="440" y2="170" stroke="rgba(143,175,138,0.15)" strokeWidth="3"/>
+            <line x1="110" y1="0" x2="110" y2="220" stroke="rgba(143,175,138,0.15)" strokeWidth="3"/>
+            <line x1="330" y1="0" x2="330" y2="220" stroke="rgba(143,175,138,0.15)" strokeWidth="3"/>
+          </svg>
+          {/* Risk zone */}
+          <div style={{
+            position: "absolute",
+            width: 90, height: 90,
+            borderRadius: "50%",
+            background: "rgba(196,168,130,0.22)",
+            border: "1.5px dashed rgba(196,168,130,0.6)",
+            top: 65, left: 120,
+          }} />
+          {/* Dots */}
+          {[
+            { x: 80, y: 55, color: "#4ade80", size: 10 },
+            { x: 185, y: 115, color: "#4ade80", size: 8 },
+            { x: 310, y: 80, color: "#4ade80", size: 10 },
+            { x: 155, y: 155, color: "#f59e0b", size: 8 },
+            { x: 360, y: 155, color: "#4ade80", size: 7 },
+            { x: 240, y: 45, color: "#4ade80", size: 7 },
+          ].map((d, i) => (
+            <div key={i} style={{
+              position: "absolute",
+              left: d.x, top: d.y,
+              width: d.size, height: d.size,
+              borderRadius: "50%",
+              background: d.color,
+              transform: "translate(-50%,-50%)",
+              boxShadow: `0 0 0 3px ${d.color}30`,
+              animation: `pulse ${1.5 + i * 0.3}s ease-in-out infinite`,
+            }} />
+          ))}
+          {/* Alert chip */}
+          <div style={{
+            position: "absolute", bottom: 14, left: 14,
+            background: "var(--white)",
+            border: "1px solid rgba(26,24,20,0.1)",
+            borderRadius: 9999,
+            padding: "6px 12px",
+            display: "flex", alignItems: "center", gap: 7,
+            fontSize: 12, fontWeight: 500, color: "var(--ink)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+          }}>
+            <span className="dot-live" style={{ width: 6, height: 6 }} />
+            3 new reports nearby
+          </div>
+          {/* Label */}
+          <div style={{
+            position: "absolute", top: 12, right: 12,
+            background: "rgba(247,245,240,0.92)",
+            borderRadius: 8, padding: "4px 10px",
+            fontSize: 11, fontWeight: 600, color: "var(--sage-dark)",
+            letterSpacing: "0.06em", textTransform: "uppercase",
+          }}>
+            Live
+          </div>
+        </div>
+      </section>
+
+      {/* ── WHY ── */}
+      <section style={{
+        padding: "clamp(56px, 10vw, 88px) clamp(16px, 5vw, 48px)",
+        background: "var(--cream-dark)",
+        borderTop: "1px solid rgba(26,24,20,0.06)",
+        borderBottom: "1px solid rgba(26,24,20,0.06)",
+      }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <span className="section-label">Why GeoPulse Exists</span>
+          <h2 className="serif" style={{
+            marginTop: 16,
+            fontSize: "clamp(26px, 4vw, 42px)",
+            fontWeight: 400,
+            lineHeight: 1.15,
+            color: "var(--ink)",
+            marginBottom: 24,
+          }}>
+            In many communities, safety information spreads too late.
+          </h2>
+          <p style={{ fontSize: 17, lineHeight: 1.8, color: "var(--ink-muted)", marginBottom: 16 }}>
+            People only find out after something has already happened. A robbery two streets away. An accident blocking a route. A situation that had been building for hours.
+          </p>
+          <p style={{ fontSize: 17, lineHeight: 1.8, color: "var(--ink-muted)", marginBottom: 32 }}>
+            GeoPulse AI changes that. We're building a living awareness layer for communities — where local knowledge flows freely, risks surface early, and people look out for each other automatically.
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
+            {[
+              { icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="1.2"/></svg>
+                ), text: "Share what you see in real time" },
+              { icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2l7 4-7 4-7-4 7-4zM5 10v6a2 2 0 0 0 2 2h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                ), text: "Stay aware of developing situations" },
+              { icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3l8 5-8 5-8-5 8-5z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                ), text: "Understand safer and risky areas dynamically" },
+              { icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                ), text: "Look out for each other through shared intelligence" },
+            ].map((item) => (
+              <div key={item.text} style={{
+                display: "flex", alignItems: "flex-start", gap: 12,
+                background: "var(--white)",
+                border: "1px solid rgba(26,24,20,0.07)",
+                borderRadius: 14, padding: "16px 18px",
+              }}>
+                <span style={{ color: "var(--sage-dark)", fontSize: 16, flexShrink: 0, marginTop: 1 }}>{item.icon}</span>
+                <span style={{ fontSize: 14, lineHeight: 1.65, color: "var(--ink-muted)", fontWeight: 400 }}>{item.text}</span>
+              </div>
             ))}
           </div>
 
-          <div className="flex items-center gap-3 md:gap-4">
-            <button
-              aria-label="Open navigation"
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[rgb(134,147,151,0.18)] bg-white/5 text-[var(--on-surface)] md:hidden"
-            >
-              <span className="flex flex-col gap-1.5">
-                <span className="block h-0.5 w-4 bg-current" />
-                <span className="block h-0.5 w-4 bg-current" />
-                <span className="block h-0.5 w-4 bg-current" />
-              </span>
-            </button>
-            <button className="hidden text-[18px] font-semibold text-[var(--on-surface)] transition-colors hover:text-[var(--primary)] md:block">
-              Contact
-            </button>
-            <Link
-              href="/login"
-              className="rounded-full bg-[var(--primary-container)] px-4 py-2 text-[16px] font-semibold text-[var(--on-primary-container)] shadow-[0_12px_40px_rgba(6,182,212,0.18)] transition hover:bg-[var(--primary)] md:px-6 md:text-[18px]"
-            >
-              Login
-            </Link>
-          </div>
-        </nav>
-      </header>
+          <p style={{ marginTop: 28, fontSize: 15, color: "var(--ink-faint)", fontStyle: "italic" }}>
+            Because safety should not depend on luck or late information.
+          </p>
+        </div>
+      </section>
 
-      <main className="relative pt-20">
-        <section className="map-bg hud-grid relative flex min-h-[720px] items-center justify-center overflow-hidden px-4 sm:px-6 md:px-8 lg:min-h-[800px] lg:h-screen">
-          <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <img
-              alt="Intelligence Map"
-              className="h-full w-full object-cover opacity-20 grayscale brightness-50"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBoUDUv6KsJ6aOEGjCRHq1-PQnOShZ_sAOYawMq1F4Yyctzcz7GGfq1z8pYMI3r-pB18DvWCLtCsNEG9Ze7I3BJAhF4BLKd9UEZ-wIDvjktedoAdYNTt2rwLLwDqOXNkd2oPEA1Z3Ssaaxj0xvIM7WEXfIHpJmw8BTY9N-qQ0vLebpLzlSFbme8h71P2F5to4Tp-dHvdNnI5NZGlIaFaQxuO-_3scT7aOXEldeGc21pbtiLZFCshc8nf-sgxcuo1pHknUOF1Jh7kg3A"
-            />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(6,182,212,0.10),transparent_28%),radial-gradient(circle_at_80%_70%,rgba(78,222,163,0.08),transparent_25%),linear-gradient(180deg,rgba(5,5,5,0.18),rgba(10,15,30,0.5))]" />
-            <div className="glow-pulse absolute left-[22%] top-[28%] h-3 w-3 rounded-full bg-[var(--secondary)]" />
-            <div
-              className="glow-pulse absolute right-[29%] top-[34%] h-4 w-4 rounded-full bg-[var(--primary-container)]"
-              style={{ animationDelay: "1s" }}
-            />
-            <div
-              className="glow-pulse absolute bottom-[22%] right-[24%] h-2.5 w-2.5 rounded-full bg-[var(--tertiary-container)]"
-              style={{ animationDelay: "2s" }}
-            />
+      {/* ── HOW IT WORKS ── */}
+      <section id="how-it-works" style={{ padding: "clamp(56px, 10vw, 88px) clamp(16px, 5vw, 48px)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <span className="section-label">How It Works</span>
+          <h2 className="serif" style={{
+            marginTop: 16,
+            fontSize: "clamp(26px, 4vw, 42px)",
+            fontWeight: 400,
+            lineHeight: 1.15,
+            color: "var(--ink)",
+            marginBottom: 40,
+          }}>
+            Four simple pillars of shared awareness.
+          </h2>
 
-            <div className="glass-panel absolute right-8 top-32 hidden max-w-[200px] rounded-xl border-l-4 border-l-[var(--primary)] p-4 lg:block">
-              <div className="mb-2 flex items-center gap-2">
-                <HudChip label="SEC" color="var(--primary)" />
-                <span className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--on-surface-variant)]">
-                  Threat Level
-                </span>
-              </div>
-              <div className="font-display text-[32px] font-semibold text-[var(--primary)]">
-                ELEVATED
-              </div>
-              <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/5">
-                <div className="h-full w-[65%] bg-[var(--primary)]" />
-              </div>
-            </div>
-
-            <div className="glass-panel absolute bottom-28 left-8 hidden max-w-[220px] rounded-xl border-l-4 border-l-[var(--secondary)] p-4 lg:block">
-              <div className="mb-2 flex items-center gap-2">
-                <HudChip label="MON" color="var(--secondary)" />
-                <span className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--on-surface-variant)]">
-                  Live Analysis
-                </span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between font-mono-ui text-[11px] uppercase tracking-[0.15em] text-[var(--on-surface)]">
-                  <span>SATELLITE</span>
-                  <span className="text-[var(--secondary)]">ACTIVE</span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+            {howItWorks.map((f, i) => (
+              <div key={f.title} className="card">
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  <div style={{
+                    width: 36, height: 36,
+                    borderRadius: 10,
+                    background: "var(--earth-light)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 15, color: "var(--earth-dark)",
+                    flexShrink: 0,
+                  }}>
+                    {f.icon}
+                  </div>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, letterSpacing: "0.12em",
+                    textTransform: "uppercase", color: "var(--ink-faint)",
+                  }}>
+                    0{i + 1}
+                  </span>
                 </div>
-                <div className="flex justify-between font-mono-ui text-[11px] uppercase tracking-[0.15em] text-[var(--on-surface)]">
-                  <span>GRID SYNC</span>
-                  <span className="text-[var(--secondary)]">98.4%</span>
-                </div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)", marginBottom: 9 }}>{f.title}</div>
+                <div style={{ fontSize: 13.5, color: "var(--ink-muted)", lineHeight: 1.7 }}>{f.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── WHO IT'S FOR ── */}
+      <section style={{
+        padding: "clamp(56px, 10vw, 88px) clamp(16px, 5vw, 48px)",
+        background: "var(--cream-dark)",
+        borderTop: "1px solid rgba(26,24,20,0.06)",
+        borderBottom: "1px solid rgba(26,24,20,0.06)",
+      }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <span className="section-label">Built for Everyday Life</span>
+          <h2 className="serif" style={{
+            marginTop: 16,
+            fontSize: "clamp(26px, 4vw, 42px)",
+            fontWeight: 400,
+            lineHeight: 1.15,
+            color: "var(--ink)",
+            marginBottom: 12,
+          }}>
+            For real people in real environments.
+          </h2>
+          <p style={{ fontSize: 16, color: "var(--ink-muted)", marginBottom: 36, lineHeight: 1.7 }}>
+            GeoPulse AI is designed for anyone who moves through a city and wants to stay a step ahead.
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            {audience.map((a) => (
+              <div key={a.label} style={{
+                background: "var(--white)",
+                border: "1px solid rgba(26,24,20,0.08)",
+                borderRadius: 16, padding: "20px 18px",
+                display: "flex", flexDirection: "column", gap: 8,
+              }}>
+                <span style={{ fontSize: 24 }}>{a.icon}</span>
+                <span style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>{a.label}</span>
+                <span style={{ fontSize: 13, color: "var(--ink-muted)", lineHeight: 1.6 }}>{a.desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── PHILOSOPHY ── */}
+      <section style={{
+        padding: "clamp(56px, 10vw, 88px) clamp(16px, 5vw, 48px)",
+        textAlign: "center",
+      }}>
+        <div style={{ maxWidth: 900, margin: "0 auto" }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: "50%",
+            background: "var(--sage-light)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            margin: "0 auto 28px",
+            fontSize: 22, color: "var(--sage-dark)",
+          }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>
+          </div>
+          <h2 className="serif" style={{
+            fontSize: "clamp(24px, 4vw, 40px)",
+            fontWeight: 400,
+            color: "var(--ink)",
+            lineHeight: 1.2,
+            marginBottom: 20,
+          }}>
+            Not About Fear.{" "}
+            <em style={{ color: "var(--sage-dark)" }}>About Awareness.</em>
+          </h2>
+          <p style={{ fontSize: 17, lineHeight: 1.8, color: "var(--ink-muted)" }}>
+            This is not about panic or surveillance. It's about giving people better awareness of their surroundings — so decisions like <em>"when to move"</em>, <em>"where to avoid"</em>, or <em>"what's happening nearby"</em> become easier and safer.
+          </p>
+        </div>
+      </section>
+
+      {/* ── WAITLIST ── */}
+      <section id="waitlist" style={{
+        padding: "clamp(56px, 10vw, 88px) clamp(16px, 5vw, 48px)",
+        background: "transparent",
+      }}>
+        <div style={{ maxWidth: 900, margin: "0 auto" }}>
+          {/* Ripple icon */}
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 36 }}>
+            <div className="ripple-wrap" style={{ width: 60, height: 60 }}>
+              <div className="ripple" />
+              <div className="ripple" />
+              <div className="ripple" />
+              <div style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: "var(--sage)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                position: "relative", zIndex: 1,
+                fontSize: 16, color: "#fff",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="5" fill="currentColor"/></svg>
               </div>
             </div>
           </div>
 
-          <div className="scanline relative z-10 mx-auto max-w-4xl px-2 text-center">
-            <div className="mb-6 inline-flex items-center gap-3 rounded-full border border-[rgb(76,215,246,0.16)] bg-[rgb(9,14,28,0.72)] px-4 py-2 backdrop-blur-xl">
-              <span className="h-2 w-2 rounded-full bg-[var(--secondary)]" />
-              <span className="font-mono-ui text-[11px] uppercase tracking-[0.2em] text-[var(--on-surface-variant)]">
-                LIVE GEOINT SIGNAL FUSION PLATFORM
-              </span>
-            </div>
-            <h1 className="font-display text-[40px] font-bold leading-[1.12] tracking-[-0.02em] sm:text-[54px] md:text-[64px]">
-              AI-Powered Threat Intelligence <br />
-              <span className="text-[var(--primary)]">&amp; Situational Awareness</span>
-            </h1>
-            <p className="mx-auto mt-6 max-w-2xl text-[16px] leading-8 text-[var(--on-surface-variant)] md:text-xl">
-              Monitor incidents, analyze risk patterns, and coordinate real-time intelligence from a unified geospatial platform designed for the next generation of global security operations.
+          <div style={{ textAlign: "center", marginBottom: 40 }}>
+            <span style={{
+              fontSize: 11, fontWeight: 600, letterSpacing: "0.14em",
+              textTransform: "uppercase", color: "var(--sage)",
+            }}>Early Access</span>
+            <h2 className="serif" style={{
+              marginTop: 14,
+              fontSize: "clamp(28px, 5vw, 44px)",
+              fontWeight: 400, lineHeight: 1.1,
+              color: "#FEFCF8",
+            }}>
+              Be among the first to experience it.
+            </h2>
+            <p style={{ marginTop: 16, fontSize: 16, lineHeight: 1.8, color: "rgba(254,252,248,0.55)" }}>
+              We're building GeoPulse AI with the community, not just for the community. Join the waitlist and help shape how it works.
             </p>
-            <div className="mt-10 flex flex-col justify-center gap-4 md:flex-row">
-              <Link
-                href="/public-safety"
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgb(78,222,163,0.22)] bg-[rgb(78,222,163,0.08)] px-8 py-4 text-[18px] font-semibold text-[var(--secondary)] transition hover:scale-[1.02] hover:bg-[rgb(78,222,163,0.14)]"
-              >
-                <HudChip label="MAP" color="var(--secondary)" />
-                Explore Public Safety Map
-              </Link>
-              <Link
-                href="/login"
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-[var(--primary-container)] px-8 py-4 text-[18px] font-semibold text-[var(--on-primary-container)] transition hover:scale-[1.02] hover:bg-[var(--primary)]"
-              >
-                <HudChip label="GO" color="var(--on-primary-container)" />
-                Launch Command Center
-              </Link>
-              <Link
-                href="/register"
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgb(134,147,151,0.22)] px-8 py-4 text-[18px] font-semibold text-[var(--on-surface)] transition hover:bg-[var(--surface-variant)]"
-              >
-                <HudChip label="VIS" color="var(--on-surface)" />
-                Create Access
-              </Link>
-            </div>
           </div>
-        </section>
 
-        <section className="bg-[var(--surface-container-lowest)] px-4 py-20 sm:px-6 md:px-8 md:py-24">
-          <div className="mx-auto max-w-[1440px]">
-            <div className="mb-12 text-center md:mb-16">
-              <span className="font-mono-ui text-[12px] uppercase tracking-[0.2em] text-[var(--secondary)]">
-                Operations Dashboard
-              </span>
-              <h2 className="mt-2 font-display text-[24px] font-semibold leading-8 sm:text-[32px] sm:leading-10">
-                Unified Tactical View
-              </h2>
-            </div>
+          <div style={{
+            background: "rgba(254,252,248,0.05)",
+            border: "1px solid rgba(254,252,248,0.1)",
+            borderRadius: 20,
+            padding: "clamp(24px, 5vw, 36px)",
+          }}>
+            {!submitted ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div>
+                  <label style={{
+                    display: "block",
+                    fontSize: 11, fontWeight: 600,
+                    letterSpacing: "0.12em", textTransform: "uppercase",
+                    color: "rgba(254,252,248,0.4)",
+                    marginBottom: 9,
+                  }}>
+                    How do you see yourself using GeoPulse AI?
+                  </label>
+                  <select
+                    className="email-input"
+                    value={role}
+                    onChange={e => setRole(e.target.value)}
+                    style={{ background: "rgba(6,10,20,0.85)", borderColor: "rgba(255,255,255,0.06)", color: "#e8edf2" }}
+                  >
+                    <option value="" disabled>Select an option</option>
+                    <option value="Community Member">Community Member</option>
+                    <option value="Student / Youth">Student / Youth</option>
+                    <option value="Driver / Rider">Driver / Rider</option>
+                    <option value="Security Professional">Security Professional</option>
+                    <option value="Potential Partner / Organization">Potential Partner / Organization</option>
+                  </select>
 
-            <div className="glass-panel relative overflow-hidden rounded-[24px] shadow-2xl">
-              <div className="flex h-8 items-center gap-2 border-b border-[rgb(61,73,76,0.2)] bg-[var(--surface-container-high)] px-4">
-                <div className="h-2.5 w-2.5 rounded-full bg-[rgb(255,180,171,0.4)]" />
-                <div className="h-2.5 w-2.5 rounded-full bg-[rgb(255,129,122,0.4)]" />
-                <div className="h-2.5 w-2.5 rounded-full bg-[rgb(78,222,163,0.4)]" />
-                <div className="ml-4 font-mono-ui text-[11px] uppercase tracking-[0.16em] text-[var(--on-surface-variant)]">
-                  INTELLIGENCE_CORE_V2.0 // TERMINAL_ALPHA
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-6 bg-[rgb(22,27,43,0.45)] p-4 pt-12 lg:flex-row lg:p-8">
-                <div className="w-full space-y-4 lg:w-80">
-                  <div className="glass-panel rounded-xl border-l-2 border-l-[var(--primary)] p-4">
-                    <h4 className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--primary)]">
-                      RISK SCORE: LONDON HQ
-                    </h4>
-                    <div className="mt-2 font-display text-[36px] font-semibold leading-none">
-                      12.4{" "}
-                      <span className="text-base font-normal text-[var(--secondary)]">
-                        (-2.1)
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs text-[var(--on-surface-variant)]">
-                      Status: Stable Operations
-                    </p>
-                  </div>
-
-                  <div className="glass-panel rounded-xl border-l-2 border-l-[var(--tertiary-container)] p-4">
-                    <h4 className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--tertiary-container)]">
-                      CRITICAL ALERTS
-                    </h4>
-                    <div className="mt-4 space-y-3">
-                      {[
-                        ["Anomalous Activity Detected", "Sector 4-G | 2 mins ago"],
-                        ["Sensor Disconnection", "Northeast Perimeter | 14 mins ago"],
-                      ].map(([title, detail]) => (
-                        <div key={title} className="flex items-start gap-3">
-                          <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-[var(--tertiary-container)]" />
-                          <div>
-                            <p className="text-sm font-semibold text-[var(--on-surface)]">{title}</p>
-                            <p className="text-xs text-[var(--on-surface-variant)]">{detail}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="relative h-[360px] overflow-hidden rounded-xl sm:h-[420px] lg:h-[500px] lg:flex-1">
-                  <img
-                    alt="Interface Preview"
-                    className="h-full w-full object-cover transition-transform duration-700 hover:scale-[1.03]"
-                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8PXP5bcwIPguhK09nVCSB3DvXP6fnYshtVHqhhFagXAb5ivGug7TP3JQM7-USbQH1GYu-ZRhplJSwNDBsTMYnOoICZjEPVQMIWLDl8Lrrgi9DG32tUGHgIoRoG-x0hRMiDJRkWaPmW6wd_9Am0ufF4VCRc06-kbpSGgexUYBzYR4NQ55g6G4ertei7OP8oqhZ39SFblbgbjX9LVpT04OFESmg-rgJ5qyxaGuvT1I_LAG0pscT2BcJ4IxpuU5X34yZlvOvi1UyEX_j"
+                  <label style={{
+                    display: "block",
+                    fontSize: 11, fontWeight: 600,
+                    letterSpacing: "0.12em", textTransform: "uppercase",
+                    color: "rgba(254,252,248,0.4)",
+                    margin: "12px 0 9px",
+                  }}>
+                    Your Email
+                  </label>
+                  <input
+                    type="email"
+                    className="email-input"
+                    style={{ background: "rgba(254,252,248,0.06)", borderColor: "rgba(254,252,248,0.12)", color: "#FEFCF8" }}
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSubmit()}
+                    placeholder="you@example.com"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[var(--surface-container-lowest)] to-transparent opacity-45" />
-                  <div className="pointer-events-none absolute inset-4 flex flex-col justify-between border border-[rgb(76,215,246,0.1)]">
-                    <div className="flex justify-between p-4">
-                      <div className="rounded border border-[rgb(76,215,246,0.3)] bg-black/80 px-2 py-1 font-mono-ui text-[10px] uppercase tracking-[0.18em] text-[var(--primary)]">
-                        GRID_SYNC_092
-                      </div>
-                      <div className="rounded border border-[rgb(76,215,246,0.3)] bg-black/80 px-2 py-1 font-mono-ui text-[10px] uppercase tracking-[0.18em] text-[var(--primary)]">
-                        REC: 00:45:12
-                      </div>
-                    </div>
-                    <div className="flex gap-4 overflow-x-auto p-4">
-                      <div className="glass-panel shrink-0 rounded-md border border-[rgb(78,222,163,0.2)] px-4 py-2">
-                        <div className="flex items-center gap-3">
-                          <span className="h-2 w-2 rounded-full bg-[var(--secondary)]" />
-                          <span className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--on-surface)]">
-                            Sector Secure
-                          </span>
-                        </div>
-                      </div>
-                      <div className="glass-panel shrink-0 rounded-md border border-[rgb(76,215,246,0.2)] px-4 py-2">
-                        <div className="flex items-center gap-3">
-                          <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
-                          <span className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--on-surface)]">
-                            UAV Live Feed
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                </div>
+                {submitError && (
+                  <div style={{ color: "#ffb4b4", fontSize: 13, marginBottom: 6 }}>{submitError}</div>
+                )}
+                <button className="btn-primary" style={{ background: "var(--sage-dark)", color: "#fff" }} onClick={handleSubmit} disabled={loading}>
+                  {loading ? "Saving..." : "Join the Waitlist →"}
+                </button>
+                <p style={{ fontSize: 12, color: "rgba(254,252,248,0.28)", textAlign: "center" }}>
+                  No spam. Only access updates and news.
+                </p>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: "20px 0" }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>✓</div>
+                <div style={{ fontSize: 18, fontWeight: 600, color: "#4ade80", marginBottom: 10 }}>You're on the list.</div>
+                {role && (
+                  <div style={{ fontSize: 14, color: "rgba(254,252,248,0.65)", marginBottom: 10 }}>
+                    Signed up as: {role}
                   </div>
+                )}
+                <div style={{ fontSize: 14, color: "rgba(254,252,248,0.5)", lineHeight: 1.7 }}>
+                  We'll reach out as soon as access opens. Watch your inbox.
                 </div>
               </div>
-            </div>
-          </div>
-        </section>
+            )}
 
-        <section className="px-4 py-20 sm:px-6 md:px-8 md:py-24">
-          <div className="mx-auto max-w-[1440px]">
-            <div className="mb-12 flex flex-col gap-4 md:mb-16 md:flex-row md:items-end md:justify-between">
-              <div>
-                <span className="font-mono-ui text-[12px] uppercase tracking-[0.2em] text-[var(--primary)]">
-                  Capabilities
-                </span>
-                <h2 className="mt-2 max-w-md font-display text-[24px] font-semibold leading-8 sm:text-[32px] sm:leading-10">
-                  Next-Generation Intelligence Features
-                </h2>
-              </div>
-              <button className="self-start border-b border-[rgb(76,215,246,0.3)] text-[18px] font-semibold text-[var(--primary)] transition hover:border-[var(--primary)] md:self-auto">
-                Explore Platform Specs →
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-              {featureCards.map((feature) => (
-                <div
-                  key={feature.title}
-                  className="glass-panel rounded-xl border-t-2 border-t-transparent p-8 transition hover:-translate-y-2"
-                  style={{ borderTopColor: "transparent" }}
-                >
-                  <div className="transition" style={{ color: feature.accent }}>
-                    <HudChip label={feature.badge} color={feature.accent} />
-                  </div>
-                  <h3 className="mt-6 text-[18px] font-semibold text-[var(--on-surface)]">
-                    {feature.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-7 text-[var(--on-surface-variant)]">
-                    {feature.body}
-                  </p>
+            <div style={{
+              marginTop: 28,
+              paddingTop: 24,
+              borderTop: "1px solid rgba(254,252,248,0.08)",
+              display: "flex", flexDirection: "column", gap: 12,
+            }}>
+              {perks.map(p => (
+                <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13.5, color: "rgba(254,252,248,0.5)" }}>
+                  <span style={{ color: "var(--sage)", flexShrink: 0, marginTop: 1 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="12" cy="12" r="5" fill="currentColor" />
+                    </svg>
+                  </span>
+                  {p}
                 </div>
               ))}
             </div>
           </div>
-        </section>
-
-        <section className="border-y border-[rgb(61,73,76,0.15)] bg-[var(--surface-container-low)] px-4 py-16 sm:px-6 md:px-8">
-          <div className="mx-auto grid max-w-[1440px] grid-cols-2 gap-10 lg:grid-cols-4">
-            {[
-              ["1.2M+", "Incidents Monitored", "var(--primary)"],
-              ["450+", "Active Zones", "var(--secondary)"],
-              ["99.8%", "Prediction Accuracy", "var(--primary)"],
-              ["-42%", "Response Time Reduction", "var(--secondary)"],
-            ].map(([value, label, tone]) => (
-              <div key={label} className="text-center">
-                <div className="font-mono-ui text-[40px] font-semibold" style={{ color: tone }}>
-                  {value}
-                </div>
-                <div className="mt-2 font-mono-ui text-[11px] uppercase tracking-[0.18em] text-[var(--on-surface-variant)]">
-                  {label}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="overflow-hidden px-4 py-20 sm:px-6 md:px-8 md:py-24">
-          <div className="mx-auto max-w-[1440px]">
-            <div className="mb-16 text-center md:mb-20">
-              <span className="font-mono-ui text-[12px] uppercase tracking-[0.2em] text-[var(--secondary)]">
-                Methodology
-              </span>
-              <h2 className="mt-2 font-display text-[24px] font-semibold leading-8 sm:text-[32px] sm:leading-10">
-                The Intelligence Lifecycle
-              </h2>
-            </div>
-
-            <div className="relative">
-              <div className="absolute left-0 top-1/2 hidden h-px w-full -translate-y-1/2 bg-gradient-to-r from-transparent via-[rgb(61,73,76,0.4)] to-transparent lg:block" />
-              <div className="relative z-10 grid grid-cols-1 gap-8 lg:grid-cols-5">
-                {lifecycle.map((item) => (
-                  <div key={item.step} className="flex flex-col items-center text-center">
-                    <div className="relative mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-[rgb(61,73,76,0.3)] bg-[var(--surface-container-high)]">
-                      <HudChip label={item.badge} color="var(--on-surface)" />
-                      <div
-                        className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full font-mono-ui text-[10px] font-bold"
-                        style={{ backgroundColor: item.accent, color: item.ink }}
-                      >
-                        {item.step}
-                      </div>
-                    </div>
-                    <h4 className="text-[18px] font-semibold text-[var(--on-surface)]">
-                      {item.title}
-                    </h4>
-                    <p className="mt-2 max-w-[160px] text-xs leading-6 text-[var(--on-surface-variant)]">
-                      {item.body}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="px-4 py-20 sm:px-6 md:px-8 md:py-24">
-          <div className="glass-panel relative mx-auto max-w-4xl overflow-hidden rounded-[24px] border border-[rgb(76,215,246,0.2)] p-8 text-center sm:p-12">
-            <div className="absolute inset-0 bg-[rgb(76,215,246,0.05)]" />
-            <div className="relative">
-              <h2 className="font-display text-[24px] font-semibold leading-8 sm:text-[48px] sm:leading-[56px]">
-                Secure Your Operations Today
-              </h2>
-              <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--on-surface-variant)]">
-                Join 200+ global intelligence teams monitoring the world in real-time.
-              </p>
-              <div className="mt-10 flex flex-col justify-center gap-4 sm:flex-row">
-                <button className="rounded-full bg-[var(--primary-container)] px-10 py-4 text-[18px] font-semibold text-[var(--on-primary-container)] transition hover:shadow-[0_16px_48px_rgba(76,215,246,0.22)]">
-                  Request Demo Access
-                </button>
-                <button className="rounded-full border border-[rgb(134,147,151,0.22)] px-10 py-4 text-[18px] font-semibold text-[var(--on-surface)] transition hover:bg-[var(--surface-variant)]">
-                  View Pricing
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <footer className="border-t border-[rgb(61,73,76,0.15)] bg-[var(--surface-container-lowest)] px-4 py-12 sm:px-6 md:px-8">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-8 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-4">
-            <div className="font-display text-[32px] font-bold text-[var(--on-surface)]">
-              GeoPulse AI
-            </div>
-            <p className="max-w-xs text-base leading-7 text-[var(--on-surface-variant)]">
-              Tactical intelligence systems for a safer, more predictable world. Powered by proprietary AI geospatial engines.
-            </p>
-            <div className="flex gap-4">
-              <HudChip label="WEB" color="var(--on-surface-variant)" />
-              <HudChip label="SHD" color="var(--on-surface-variant)" />
-              <HudChip label="CMD" color="var(--on-surface-variant)" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:gap-16">
-            {footerColumns.map((column) => (
-              <div key={column.title}>
-                <h5 className="mb-4 text-[18px] font-semibold text-[var(--on-surface)]">
-                  {column.title}
-                </h5>
-                <ul className="space-y-2">
-                  {column.links.map((link) => (
-                    <li key={link}>
-                      <a
-                        href="#"
-                        className="text-sm text-[var(--on-surface-variant)] transition-colors hover:text-[var(--primary)]"
-                      >
-                        {link}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
         </div>
+      </section>
 
-        <div className="mx-auto mt-12 flex max-w-[1440px] flex-col items-center justify-between gap-4 border-t border-white/5 pt-8 md:flex-row">
-          <div className="text-base text-[rgb(188,201,205,0.6)]">
-            Copyright 2024 GeoPulse AI. Tactical Intelligence Systems.
-          </div>
-          <div className="flex items-center gap-4 text-xs text-[var(--on-surface-variant)]">
-            <span>System Status:</span>
-            <span className="flex items-center gap-1.5 text-[var(--secondary)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--secondary)]" />
-              ALL SYSTEMS OPERATIONAL
-            </span>
-          </div>
-        </div>
+      {/* ── FOOTER ── */}
+      <footer style={{
+        padding: "20px clamp(16px, 5vw, 48px)",
+        background: "#111009",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        flexWrap: "wrap", gap: 12,
+        borderTop: "1px solid rgba(255,255,255,0.05)",
+      }}>
+        <span style={{ fontSize: 15, fontWeight: 600, color: "rgba(254,252,248,0.5)", letterSpacing: "-0.01em" }}>
+          <span style={{ color: "var(--sage)" }}>Geo</span>Pulse AI
+        </span>
+        <p style={{ fontSize: 11, color: "rgba(254,252,248,0.2)", letterSpacing: "0.06em", fontFamily: "monospace" }}>
+          © 2025 GeoPulse AI — Private Beta
+        </p>
       </footer>
     </div>
   );

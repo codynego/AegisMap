@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GeoPulse AI | Tactical Intelligence Systems",
+  title: "GeoPulse AI | Waitlist",
   description:
-    "Monitor incidents, analyze risk patterns, and coordinate real-time intelligence from a unified geospatial platform.",
+    "Join the waitlist for early access to GeoPulse AI's private geospatial intelligence platform.",
 };
 
 export default function RootLayout({
