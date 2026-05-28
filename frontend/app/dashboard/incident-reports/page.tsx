@@ -27,7 +27,9 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
-const NAV_ITEMS: NavItem[] = [
+type DashboardNavItem = NavItem & { icon: string };
+
+const NAV_ITEMS: DashboardNavItem[] = [
   { label: "Home", icon: "⬡", path: "/dashboard" },
   { label: "Map", icon: "◎", path: "/dashboard/live-intelligence" },
   { label: "Report", icon: "◈", path: "/dashboard/incident-reports" },
